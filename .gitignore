@@ -1,5 +1,7 @@
 # specific files/directories
 
+build
+
 # hidden files/directories
 
 .DS_Store
