@@ -258,7 +258,7 @@ class HTMLTranslator(nodes.NodeVisitor):
         self.html_prolog.append(self.doctype)
         self.head = self.meta[:]
         # stylesheets
-        styles = utils.get_stylesheet_list(settings)
+        styles = [] # utils.get_stylesheet_list(settings)
         if settings.stylesheet_path and not(settings.embed_stylesheet):
             styles = [utils.relative_path(settings._destination, sheet)
                       for sheet in styles]
