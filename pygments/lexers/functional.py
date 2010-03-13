@@ -5,15 +5,11 @@
 
     Lexers for functional languages.
 
-    :copyright: Copyright 2006-2009 by the Pygments team, see AUTHORS.
+    :copyright: Copyright 2006-2010 by the Pygments team, see AUTHORS.
     :license: BSD, see LICENSE for details.
 """
 
 import re
-try:
-    set
-except NameError:
-    from sets import Set as set
 
 from pygments.lexer import Lexer, RegexLexer, bygroups, include, do_insertions
 from pygments.token import Text, Comment, Operator, Keyword, Name, \
@@ -245,7 +241,7 @@ class CommonLispLexer(RegexLexer):
             (r'#\d*Y.*$', Comment.Special),
 
             # strings and characters
-            (r'"(\\.|[^"])*"', String),
+            (r'"(\\.|[^"\\])*"', String),
             # quoting
             (r":" + symbol, String.Symbol),
             (r"'" + symbol, String.Symbol),
@@ -443,7 +439,7 @@ class HaskellLexer(RegexLexer):
             (r'o[0-7]+', String.Escape, '#pop'),
             (r'x[\da-fA-F]+', String.Escape, '#pop'),
             (r'\d+', String.Escape, '#pop'),
-            (r'\n\s+\\', String.Escape, '#pop'),
+            (r'\s+\\', String.Escape, '#pop'),
         ],
     }
 
@@ -474,7 +470,7 @@ class LiterateHaskellLexer(Lexer):
 
         style = self.options.get('litstyle')
         if style is None:
-            style = (text.lstrip()[0] in '%\\') and 'latex' or 'bird'
+            style = (text.lstrip()[0:1] in '%\\') and 'latex' or 'bird'
 
         code = ''
         insertions = []
