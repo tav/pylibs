@@ -85,6 +85,8 @@ class PythonLexer(RegexLexer):
              r'raw_input|reduce|reload|repr|reversed|round|set|setattr|slice|'
              r'sorted|staticmethod|str|sum|super|tuple|type|unichr|unicode|'
              r'vars|xrange|zip)\b', Name.Builtin),
+            # some ampify related "builtins"
+            (r'(?<!\.)(amp|number|string|unit)\b', Name.Builtin),
             (r'(?<!\.)(self|None|Ellipsis|NotImplemented|False|True'
              r')\b', Name.Builtin.Pseudo),
             (r'(?<!\.)(ArithmeticError|AssertionError|AttributeError|'

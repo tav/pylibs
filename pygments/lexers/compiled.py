@@ -1760,6 +1760,9 @@ class GoLexer(RegexLexer):
              r'|uint|int|float|uintptr'
              r'|string|close|closed|len|cap|new|make)\b', Name.Builtin
             ),
+            # some ampify related "builtins"
+            (r'(amp|number|unit)\b', Name.Builtin
+            ),
             # float_lit
             (r'\d+(\.\d+[eE][+\-]?\d+|'
              r'\.\d*|[eE][+\-]?\d+)', Number.Float),
