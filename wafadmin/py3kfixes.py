@@ -75,6 +75,7 @@ def r4(code):
 	code = code.replace('class TaskBase(object):\n\t__metaclass__=store_task_type', 'import binascii\n\nclass TaskBase(object, metaclass=store_task_type):')
 	code = code.replace('keys=self.cstr_groups.keys()', 'keys=list(self.cstr_groups.keys())')
 	code = code.replace("sig.encode('hex')", 'binascii.hexlify(sig)')
+	code = code.replace("os.path.join(Options.cache_global,ssig)", "os.path.join(Options.cache_global,ssig.decode())")
 	return code
 
 @subst('Build.py')

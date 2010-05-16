@@ -4,7 +4,7 @@
 
 "Execute the tasks"
 
-import sys, random, time, threading, traceback
+import os, sys, random, time, threading, traceback
 try: from Queue import Queue
 except ImportError: from queue import Queue
 import Build, Utils, Logs, Options

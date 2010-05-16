@@ -133,8 +133,8 @@ def apply_java(self):
 				dirs = '.'
 				self.env.JAROPTS = ['-C', ''.join(self.env['OUTDIR']), dirs]
 
-Task.simple_task_type('jar_create', '${JAR} ${JARCREATE} ${TGT} ${JAROPTS}', color='GREEN')
-cls = Task.simple_task_type('javac', '${JAVAC} -classpath ${CLASSPATH} -d ${OUTDIR} ${JAVACFLAGS} ${SRC}')
+Task.simple_task_type('jar_create', '${JAR} ${JARCREATE} ${TGT} ${JAROPTS}', color='GREEN', shell=False)
+cls = Task.simple_task_type('javac', '${JAVAC} -classpath ${CLASSPATH} -d ${OUTDIR} ${JAVACFLAGS} ${SRC}', shell=False)
 cls.color = 'BLUE'
 def post_run_javac(self):
 	"""this is for cleaning the folder

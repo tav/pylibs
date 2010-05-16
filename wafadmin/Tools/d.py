@@ -13,101 +13,91 @@ from Configure import conftest
 EXT_D = ['.d', '.di', '.D']
 D_METHS = ['apply_core', 'apply_vnum', 'apply_objdeps'] # additional d methods
 
+DLIB = """
+version(D_Version2) {
+	import std.stdio;
+	int main() {
+		writefln("phobos2");
+		return 0;
+	}
+} else {
+	version(Tango) {
+		import tango.stdc.stdio;
+		int main() {
+			printf("tango");
+			return 0;
+		}
+	} else {
+		import std.stdio;
+		int main() {
+			writefln("phobos1");
+			return 0;
+		}
+	}
+}
+"""
+
 def filter_comments(filename):
 	txt = Utils.readf(filename)
-	buf = []
-
 	i = 0
+	buf = []
 	max = len(txt)
+	begin = 0
 	while i < max:
 		c = txt[i]
-		# skip a string
-		if c == '"':
+		if c == '"' or c == "'":  # skip a string or character literal
+			buf.append(txt[begin:i])
+			delim = c
 			i += 1
-			c = ''
 			while i < max:
-				p = c
 				c = txt[i]
+				if c == delim: break
+				elif c == '\\':  # skip the character following backslash
+					i += 1
 				i += 1
-				if i == max: return buf
-				if c == '"':
-					cnt = 0
-					while i < cnt and i < max:
-						#print "cntcnt = ", str(cnt), self.txt[self.i-2-cnt]
-						if txt[i-2-cnt] == '\\': cnt+=1
-						else: break
-					#print "cnt is ", str(cnt)
-					if (cnt%2)==0: break
 			i += 1
-		# skip a char
-		elif c == "'":
+			begin = i
+		elif c == '/':  # try to replace a comment with whitespace
+			buf.append(txt[begin:i])
 			i += 1
-			if i == max: return buf
-			c = txt[i]
-			if c == '\\':
-				i += 1
-				if i == max: return buf
-				c = txt[i]
-				if c == 'x':
-					i += 2 # skip two chars
-				elif c == 'u':
-					i += 4 # skip unicode chars
-			i += 1
-			if i == max: return buf
-			c = txt[i]
-			if c != '\'': error("uh-oh, invalid character")
-
-		# skip a comment
-		elif c == '/':
 			if i == max: break
-			c = txt[i+1]
-			# eat /+ +/ comments
-			if c == '+':
+			c = txt[i]
+			if c == '+':  # eat nesting /+ +/ comment
 				i += 1
 				nesting = 1
-				prev = 0
+				c = None
 				while i < max:
+					prev = c
 					c = txt[i]
-					if c == '+':
-						prev = 1
-					elif c == '/':
-						if prev:
-							nesting -= 1
-							if nesting == 0: break
-						else:
-							if i < max:
-								i += 1
-								c = txt[i]
-								if c == '+':
-									nesting += 1
-							else:
-								return buf
-					else:
-						prev = 0
+					if prev == '/' and c == '+':
+						nesting += 1
+						c = None
+					elif prev == '+' and c == '/':
+						nesting -= 1
+						if nesting == 0: break
+						c = None
 					i += 1
-			# eat /* */ comments
-			elif c == '*':
+			elif c == '*':  # eat /* */ comment
 				i += 1
+				c = None
 				while i < max:
+					prev = c
 					c = txt[i]
-					if c == '*':
-						prev = 1
-					elif c == '/':
-						if prev: break
-					else:
-						prev = 0
+					if prev == '*' and c == '/': break
 					i += 1
-			# eat // comments
-			elif c == '/':
+			elif c == '/':  # eat // comment
 				i += 1
-				c = txt[i]
-				while i < max and c != '\n':
+				while i < max and txt[i] != '\n':
 					i += 1
-					c = txt[i]
-		# a valid char, add it to the buffer
+			else:  # no comment
+				begin = i - 1
+				continue
+			i += 1
+			begin = i
+			buf.append(' ')
 		else:
-			buf.append(c)
-		i += 1
+			i += 1
+	buf.append(txt[begin:])
 	return buf
 
 class d_parser(object):
@@ -338,7 +328,7 @@ def apply_d_link(self):
 def apply_d_vars(self):
 	env = self.env
 	dpath_st   = env['DPATH_ST']
-	lib_st     = env['DLIB_ST']
+	lib_st	 = env['DLIB_ST']
 	libpath_st = env['DLIBPATH_ST']
 
 	importpaths = self.to_list(self.importpaths)
@@ -499,12 +489,17 @@ def d_platform_flags(conf):
 		v.DEST_OS or Utils.unversioned_sys_platform())
 	if binfmt == 'pe':
 		v['D_program_PATTERN']   = '%s.exe'
-		v['D_shlib_PATTERN']     = 'lib%s.dll'
+		v['D_shlib_PATTERN']	 = 'lib%s.dll'
 		v['D_staticlib_PATTERN'] = 'lib%s.a'
 	else:
 		v['D_program_PATTERN']   = '%s'
-		v['D_shlib_PATTERN']     = 'lib%s.so'
+		v['D_shlib_PATTERN']	 = 'lib%s.so'
 		v['D_staticlib_PATTERN'] = 'lib%s.a'
+
+@conftest
+def check_dlibrary(conf):
+	ret = conf.check_cc(features='d dprogram', fragment=DLIB, mandatory=True, compile_filename='test.d', execute=True)
+	conf.env.DLIBRARY = ret.strip()
 
 # quick test #
 if __name__ == "__main__":

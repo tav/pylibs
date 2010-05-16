@@ -64,7 +64,7 @@ def get_cc_version(conf, cc, gcc=False, icc=False):
 		# The names given to DEST_OS must match what Utils.unversioned_sys_platform() returns.
 		mp1 = {
 			'__linux__'   : 'linux',
-			'__GNU__'     : 'hurd',
+			'__GNU__'     : 'gnu',
 			'__FreeBSD__' : 'freebsd',
 			'__NetBSD__'  : 'netbsd',
 			'__OpenBSD__' : 'openbsd',

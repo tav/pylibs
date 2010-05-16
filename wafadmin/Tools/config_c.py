@@ -193,7 +193,12 @@ def exec_cfg(self, kw):
 		return
 
 	lst = [kw['path']]
-	for key, val in kw.get('define_variable', {}).iteritems():
+
+
+	defi = kw.get('define_variable', None)
+	if not defi:
+		defi = self.env.PKG_CONFIG_DEFINES or {}
+	for key, val in defi.iteritems():
 		lst.append('--define-variable=%s=%s' % (key, val))
 
 	lst.append(kw.get('args', ''))

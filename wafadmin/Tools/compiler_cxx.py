@@ -16,6 +16,7 @@ cxx_compiler = {
 'sunos':  ['g++', 'sunc++'],
 'irix':   ['g++'],
 'hpux':   ['g++'],
+'gnu':    ['g++'],
 'default': ['g++']
 }
 

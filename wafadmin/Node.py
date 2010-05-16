@@ -205,7 +205,7 @@ class Node(object):
 		if node:
 			tp = node.id & 3
 			if tp != BUILD:
-				raise Utils.WafError('find_or_declare cannot return a build node (build files in the source directory %r?)' % lst)
+				raise Utils.WafError('find_or_declare found a source file where a build file was expected %r' % '/'.join(lst))
 			return node
 		node = self.__class__(name, parent, BUILD)
 		return node

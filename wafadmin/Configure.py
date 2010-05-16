@@ -173,14 +173,12 @@ class ConfigurationContext(Utils.Context):
 				continue
 			self.tool_cache.append(mag)
 
-			if not tooldir:
-				# check if the tool exists in the Tools or 3rdparty folders
-				_Tools = Options.tooldir[0]
-				_3rdparty = os.sep.join((_Tools, '..', '3rdparty'))
-				for d in (_Tools, _3rdparty):
-					lst = os.listdir(d)
-					if tool + '.py' in lst:
-						break
+			try:
+				module = Utils.load_tool(tool, tooldir)
+			except Exception, e:
+				if 1:
+					raise e
+
 				else:
 					# try to download the tool from the repository then
 					for x in Utils.to_list(Options.remote_repo):
@@ -203,8 +201,8 @@ class ConfigurationContext(Utils.Context):
 								Logs.warn('downloaded %s from %s' % (tool, url))
 						else:
 								break
-
-			module = Utils.load_tool(tool, tooldir)
+					else:
+						break
 
 			if funs is not None:
 				self.eval_rules(funs)
@@ -297,6 +295,38 @@ class ConfigurationContext(Utils.Context):
 		sr = 'Checking for %s %s' % (th, msg)
 		self.check_message_1(sr)
 		self.check_message_2(custom, color)
+
+
+	def start_msg(self, msg):
+		try:
+			if self.in_msg:
+				return
+		except:
+			self.in_msg = 0
+		self.in_msg += 1
+
+		self.line_just = max(self.line_just, len(msg))
+		for x in ('\n', self.line_just * '-', '\n', msg, '\n'):
+			self.log.write(x)
+		Utils.pprint('NORMAL', "%s :" % msg.ljust(self.line_just), sep='')
+
+	def end_msg(self, result):
+		self.in_msg -= 1
+		if self.in_msg:
+			return
+
+		color = 'GREEN'
+		if result == True:
+			msg = 'ok'
+		elif result == False:
+			msg = 'not found'
+			color = 'YELLOW'
+		else:
+			msg = str(result)
+
+		self.log.write(msg)
+		self.log.write('\n')
+		Utils.pprint(color, msg)
 
 	def find_program(self, filename, path_list=[], var=None, mandatory=False):
 		"wrapper that adds a configuration message"

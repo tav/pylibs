@@ -99,6 +99,25 @@ class TaskManager(object):
 		self.current_group = 0
 		self.groups_names = {}
 
+	def group_name(self, g):
+		"""name for the group g (utility)"""
+		if not isinstance(g, TaskGroup):
+			g = self.groups[g]
+		for x in self.groups_names:
+			if id(self.groups_names[x]) == id(g):
+				return x
+		return ''
+
+	def group_idx(self, tg):
+		"""group the task generator tg is in"""
+		se = id(tg)
+		for i in range(len(self.groups)):
+			g = self.groups[i]
+			for t in g.tasks_gen:
+				if id(t) == se:
+					return i
+		return None
+
 	def get_next_set(self):
 		"""return the next set of tasks to execute
 		the first parameter is the maximum amount of parallelization that may occur"""

@@ -216,9 +216,10 @@ class task_gen(object):
 		if getattr(self, 'posted', None):
 			#error("OBJECT ALREADY POSTED" + str( self))
 			return
+
 		self.apply()
-		debug('task_gen: posted %s', self.name)
 		self.posted = True
+		debug('task_gen: posted %s', self.name)
 
 	def get_hook(self, ext):
 		try: return self.mappings[ext]
@@ -290,7 +291,9 @@ class task_gen(object):
 		else: self.source += lst
 
 	def clone(self, env):
-		""
+		"""when creating a clone in a task generator method, 
+		make sure to set posted=False on the clone 
+		else the other task generator will not create its tasks"""
 		newobj = task_gen(bld=self.bld)
 		for x in self.__dict__:
 			if x in ['env', 'bld']:
@@ -385,6 +388,7 @@ def declare_chain(name='', action='', ext_in='', ext_out='', reentrant=True, col
 			tsk.install = install
 
 	declare_extension(act.ext_in, x_file)
+	return x_file
 
 def bind_feature(name, methods):
 	lst = Utils.to_list(methods)
@@ -404,10 +408,17 @@ attributes. A prerequisite for execution is to have the attribute set before.
 Intelligent compilers binding aspect-oriented programming and parallelization, what a nice topic for studies.
 """
 def taskgen(func):
+	"""
+	register a method as a task generator method
+	"""
 	setattr(task_gen, func.__name__, func)
 	return func
 
 def feature(*k):
+	"""
+	declare a task generator method that will be executed when the
+	object attribute 'feature' contains the corresponding key(s)
+	"""
 	def deco(func):
 		setattr(task_gen, func.__name__, func)
 		for name in k:
@@ -416,6 +427,10 @@ def feature(*k):
 	return deco
 
 def before(*k):
+	"""
+	declare a task generator method which will be executed
+	before the functions of given name(s)
+	"""
 	def deco(func):
 		setattr(task_gen, func.__name__, func)
 		for fun_name in k:
@@ -425,6 +440,10 @@ def before(*k):
 	return deco
 
 def after(*k):
+	"""
+	declare a task generator method which will be executed
+	after the functions of given name(s)
+	"""
 	def deco(func):
 		setattr(task_gen, func.__name__, func)
 		for fun_name in k:
@@ -434,6 +453,10 @@ def after(*k):
 	return deco
 
 def extension(var):
+	"""
+	declare a task generator method which will be invoked during
+	the processing of source files for the extension given
+	"""
 	def deco(func):
 		setattr(task_gen, func.__name__, func)
 		try:

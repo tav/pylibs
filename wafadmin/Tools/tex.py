@@ -43,37 +43,50 @@ def scan(self):
 	debug("tex: found the following : %s and names %s" % (nodes, names))
 	return (nodes, names)
 
+latex_fun, _ = Task.compile_fun('latex', '${LATEX} ${LATEXFLAGS} ${SRCFILE}', shell=False)
+pdflatex_fun, _ = Task.compile_fun('pdflatex', '${PDFLATEX} ${PDFLATEXFLAGS} ${SRCFILE}', shell=False)
+bibtex_fun, _ = Task.compile_fun('bibtex', '${BIBTEX} ${BIBTEXFLAGS} ${SRCFILE}', shell=False)
+makeindex_fun, _ = Task.compile_fun('bibtex', '${MAKEINDEX} ${MAKEINDEXFLAGS} ${SRCFILE}', shell=False)
+
 g_bibtex_re = re.compile('bibdata', re.M)
 def tex_build(task, command='LATEX'):
 	env = task.env
 	bld = task.generator.bld
 
-	com = '%s %s' % (env[command], env.get_flat(command+'FLAGS'))
-	if not env['PROMPT_LATEX']: com = "%s %s" % (com, '-interaction=batchmode')
+	if not env['PROMPT_LATEX']:
+		env.append_value('LATEXFLAGS', '-interaction=batchmode')
+		env.append_value('PDFLATEXFLAGS', '-interaction=batchmode')
+
+	fun = latex_fun
+	if command == 'PDFLATEX':
+		fun = pdflatex_fun
 
 	node = task.inputs[0]
 	reldir  = node.bld_dir(env)
-	srcfile = node.srcpath(env)
 
 	lst = []
 	for c in Utils.split_path(reldir):
 		if c: lst.append('..')
-	sr = os.path.join(*(lst + [srcfile]))
+	srcfile = os.path.join(*(lst + [node.srcpath(env)]))
 	sr2 = os.path.join(*(lst + [node.parent.srcpath(env)]))
 
 	aux_node = node.change_ext('.aux')
 	idx_node = node.change_ext('.idx')
 
-	hash     = ''
-	old_hash = ''
-
 	nm = aux_node.name
 	docuname = nm[ : len(nm) - 4 ] # 4 is the size of ".aux"
 
-	latex_compile_cmd = 'cd %s && TEXINPUTS=%s:$TEXINPUTS %s %s' % (reldir, sr2, com, sr)
+	# important, set the cwd for everybody
+	task.cwd = task.inputs[0].parent.abspath(task.env)
+
+
 	warn('first pass on %s' % command)
-	ret = bld.exec_command(latex_compile_cmd)
-	if ret: return ret
+
+	task.env.env = {'TEXINPUTS': sr2 + os.pathsep}
+	task.env.SRCFILE = srcfile
+	ret = fun(task)
+	if ret:
+		return ret
 
 	# look in the .aux file if there is a bibfile to process
 	try:
@@ -83,14 +96,15 @@ def tex_build(task, command='LATEX'):
 	else:
 		fo = g_bibtex_re.findall(ct)
 
-		# yes, there is a .aux file to process
+		# there is a .aux file to process
 		if fo:
-			bibtex_compile_cmd = 'cd %s && BIBINPUTS=%s:$BIBINPUTS %s %s' % (reldir, sr2, env['BIBTEX'], docuname)
-
 			warn('calling bibtex')
-			ret = bld.exec_command(bibtex_compile_cmd)
+
+			task.env.env = {'BIBINPUTS': sr2 + os.pathsep, 'BSTINPUTS': sr2 + os.pathsep}
+			task.env.SRCFILE = docuname
+			ret = bibtex_fun(task)
 			if ret:
-				error('error when calling bibtex %s' % bibtex_compile_cmd)
+				error('error when calling bibtex %s' % docuname)
 				return ret
 
 	# look on the filesystem if there is a .idx file to process
@@ -100,20 +114,24 @@ def tex_build(task, command='LATEX'):
 	except OSError:
 		error('error file.idx scan')
 	else:
-		makeindex_compile_cmd = 'cd %s && %s %s' % (reldir, env['MAKEINDEX'], idx_path)
 		warn('calling makeindex')
-		ret = bld.exec_command(makeindex_compile_cmd)
+
+		task.env.SRCFILE = idx_node.name
+		task.env.env = {}
+		ret = makeindex_fun(task)
 		if ret:
-			error('error when calling makeindex %s' % makeindex_compile_cmd)
+			error('error when calling makeindex %s' % idx_path)
 			return ret
 
+
+	hash = ''
 	i = 0
 	while i < 10:
 		# prevent against infinite loops - one never knows
 		i += 1
 
 		# watch the contents of file.aux
-		old_hash = hash
+		prev_hash = hash
 		try:
 			hash = Utils.h_file(aux_node.abspath(env))
 		except KeyError:
@@ -124,17 +142,20 @@ def tex_build(task, command='LATEX'):
 		#print "hash is, ", hash, " ", old_hash
 
 		# stop if file.aux does not change anymore
-		if hash and hash == old_hash: break
+		if hash and hash == prev_hash:
+			break
 
 		# run the command
 		warn('calling %s' % command)
-		ret = bld.exec_command(latex_compile_cmd)
+
+		task.env.env = {'TEXINPUTS': sr2 + os.pathsep}
+		task.env.SRCFILE = srcfile
+		ret = fun(task)
 		if ret:
 			error('error when calling %s %s' % (command, latex_compile_cmd))
 			return ret
 
-	# 0 means no error
-	return 0
+	return None # ok
 
 latex_vardeps  = ['LATEX', 'LATEXFLAGS']
 def latex_build(task):
@@ -197,10 +218,10 @@ def apply_tex(self):
 		if self.type == 'latex':
 			if 'ps' in outs:
 				tsk = self.create_task('dvips', task.outputs, node.change_ext('.ps'))
-				tsk.env.env = {'TEXINPUTS' : node.parent.abspath() + ':' + self.path.abspath() + ':' + self.path.abspath(self.env)}
+				tsk.env.env = {'TEXINPUTS' : node.parent.abspath() + os.pathsep + self.path.abspath() + os.pathsep + self.path.abspath(self.env)}
 			if 'pdf' in outs:
 				tsk = self.create_task('dvipdf', task.outputs, node.change_ext('.pdf'))
-				tsk.env.env = {'TEXINPUTS' : node.parent.abspath() + ':' + self.path.abspath() + ':' + self.path.abspath(self.env)}
+				tsk.env.env = {'TEXINPUTS' : node.parent.abspath() + os.pathsep + self.path.abspath() + os.pathsep + self.path.abspath(self.env)}
 		elif self.type == 'pdflatex':
 			if 'ps' in outs:
 				self.create_task('pdf2ps', task.outputs, node.change_ext('.ps'))
@@ -214,11 +235,12 @@ def detect(conf):
 	v['DVIPSFLAGS'] = '-Ppdf'
 
 b = Task.simple_task_type
-b('tex', '${TEX} ${TEXFLAGS} ${SRC}', color='BLUE', shell=False)
-b('bibtex', '${BIBTEX} ${BIBTEXFLAGS} ${SRC}', color='BLUE', shell=False)
+b('tex', '${TEX} ${TEXFLAGS} ${SRC}', color='BLUE', shell=False) # not used anywhere
+b('bibtex', '${BIBTEX} ${BIBTEXFLAGS} ${SRC}', color='BLUE', shell=False) # not used anywhere
 b('dvips', '${DVIPS} ${DVIPSFLAGS} ${SRC} -o ${TGT}', color='BLUE', after="latex pdflatex tex bibtex", shell=False)
 b('dvipdf', '${DVIPDF} ${DVIPDFFLAGS} ${SRC} ${TGT}', color='BLUE', after="latex pdflatex tex bibtex", shell=False)
 b('pdf2ps', '${PDF2PS} ${PDF2PSFLAGS} ${SRC} ${TGT}', color='BLUE', after="dvipdf pdflatex", shell=False)
+
 b = Task.task_type_from_func
 cls = b('latex', latex_build, vars=latex_vardeps)
 cls.scan = scan

@@ -71,7 +71,7 @@ def apply_defines_cc(self):
 		if val: milst += val
 	self.env['DEFLINES'] = ["%s %s" % (x[0], Utils.trimquotes('='.join(x[1:]))) for x in [y.split('=') for y in milst]]
 	y = self.env['CCDEFINES_ST']
-	self.env['_CCDEFFLAGS'] = [y%x for x in milst]
+	self.env.append_unique('_CCDEFFLAGS', [y%x for x in milst])
 
 @extension(EXT_CC)
 def c_hook(self, node):

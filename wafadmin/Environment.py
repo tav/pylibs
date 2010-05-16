@@ -55,7 +55,7 @@ class Environment(object):
 
 	def __delitem__(self, key):
 		del self.table[key]
-	
+
 	def pop(self, key, *args):
 		if len(args):
 			return self.table.pop(key, *args)

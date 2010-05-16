@@ -16,6 +16,7 @@ c_compiler = {
 	'sunos':  ['gcc', 'suncc'],
 	'irix':   ['gcc'],
 	'hpux':   ['gcc'],
+	'gnu':    ['gcc'],
 	'default': ['gcc']
 }
 

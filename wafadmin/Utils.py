@@ -269,13 +269,14 @@ def load_module(file_path, name=WSCRIPT_FILE):
 
 	module.waf_hash_val = code
 
-	sys.path.insert(0, os.path.dirname(file_path))
+	dt = os.path.dirname(file_path)
+	sys.path.insert(0, dt)
 	try:
 		exec(compile(code, file_path, 'exec'), module.__dict__)
 	except Exception:
 		exc_type, exc_value, tb = sys.exc_info()
 		raise WscriptError("".join(traceback.format_exception(exc_type, exc_value, tb)), file_path)
-	sys.path.pop(0)
+	sys.path.remove(dt)
 
 	g_loaded_modules[file_path] = module
 
@@ -472,7 +473,7 @@ def subst_vars(expr, params):
 def unversioned_sys_platform_to_binary_format(unversioned_sys_platform):
 	"infers the binary format from the unversioned_sys_platform name."
 
-	if unversioned_sys_platform in ('linux', 'freebsd', 'netbsd', 'openbsd', 'sunos'):
+	if unversioned_sys_platform in ('linux', 'freebsd', 'netbsd', 'openbsd', 'sunos', 'gnu'):
 		return 'elf'
 	elif unversioned_sys_platform == 'darwin':
 		return 'mac-o'
@@ -490,7 +491,7 @@ def unversioned_sys_platform():
 	So we remove the version from the name, except for special cases where the os has a stupid name like os2 or win32.
 	Some possible values of sys.platform are, amongst others:
 		aix3 aix4 atheos beos5 darwin freebsd2 freebsd3 freebsd4 freebsd5 freebsd6 freebsd7
-		generic irix5 irix6 linux2 mac netbsd1 next3 os2emx riscos sunos5 unixware7
+		generic gnu0 irix5 irix6 linux2 mac netbsd1 next3 os2emx riscos sunos5 unixware7
 	Investigating the python source tree may reveal more values.
 	"""
 	s = sys.platform
@@ -523,7 +524,7 @@ def detect_platform():
 	s = sys.platform
 
 	# known POSIX
-	for x in 'cygwin linux irix sunos hpux aix darwin'.split():
+	for x in 'cygwin linux irix sunos hpux aix darwin gnu'.split():
 		# sys.platform may be linux2
 		if s.find(x) >= 0:
 			return x
@@ -547,6 +548,8 @@ def load_tool(tool, tooldir=None):
 	if tooldir:
 		assert isinstance(tooldir, list)
 		sys.path = tooldir + sys.path
+	else:
+		tooldir = []
 	try:
 		try:
 			return __import__(tool)
@@ -554,8 +557,8 @@ def load_tool(tool, tooldir=None):
 			Logs.error('Could not load the tool %r in %r:\n%s' % (tool, sys.path, e))
 			raise
 	finally:
-		if tooldir:
-			sys.path = sys.path[len(tooldir):]
+		for dt in tooldir:
+			sys.path.remove(dt)
 
 def readf(fname, m='r'):
 	"get the contents of a file, it is not used anywhere for the moment"

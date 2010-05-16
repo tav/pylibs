@@ -229,7 +229,11 @@ def exec_test(self):
 	status = 0
 
 	variant = self.env.variant()
+
 	filename = self.inputs[0].abspath(self.env)
+	self.ut_exec = getattr(self, 'ut_exec', [filename])
+	if getattr(self.generator, 'ut_fun', None):
+		self.generator.ut_fun(self)
 
 	try:
 		fu = getattr(self.generator.bld, 'all_test_paths')
@@ -256,7 +260,7 @@ def exec_test(self):
 
 
 	cwd = getattr(self.generator, 'ut_cwd', '') or self.inputs[0].parent.abspath(self.env)
-	proc = Utils.pproc.Popen(filename, cwd=cwd, env=fu, stderr=Utils.pproc.PIPE, stdout=Utils.pproc.PIPE)
+	proc = Utils.pproc.Popen(self.ut_exec, cwd=cwd, env=fu, stderr=Utils.pproc.PIPE, stdout=Utils.pproc.PIPE)
 	(stdout, stderr) = proc.communicate()
 
 	tup = (filename, proc.returncode, stdout, stderr)

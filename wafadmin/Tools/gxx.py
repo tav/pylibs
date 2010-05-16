@@ -73,9 +73,7 @@ def gxx_modifier_win32(conf):
 	v['IMPLIB_ST']           = '-Wl,--out-implib,%s'
 
 	dest_arch = v['DEST_CPU']
-	if dest_arch == 'x86':
-		# On 32-bit x86, gcc emits a message telling the -fPIC option is ignored on this arch, so we remove that flag.
-		v['shlib_CXXFLAGS'] = ['-DPIC'] # TODO this is a wrong define, we don't use -fPIC!
+	v['shlib_CXXFLAGS'] = []
 
 	v.append_value('shlib_CXXFLAGS', '-DDLL_EXPORT') # TODO adding nonstandard defines like this DLL_EXPORT is not a good idea
 

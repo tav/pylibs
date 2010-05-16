@@ -5,7 +5,7 @@
 
 import re
 import Task, Utils, Logs
-from TaskGen import extension, taskgen, feature, after
+from TaskGen import extension
 from Configure import conf
 import preproc
 
@@ -19,7 +19,7 @@ rev 5859 is much more simple
 
 SWIG_EXTS = ['.swig', '.i']
 
-swig_str = '${SWIG} ${SWIGFLAGS} ${SRC}'
+swig_str = '${SWIG} ${SWIGFLAGS} ${_CCINCFLAGS} ${_CXXINCFLAGS} ${_CCDEFFLAGS} ${_CXXDEFFLAGS} ${SRC}'
 cls = Task.simple_task_type('swig', swig_str, color='BLUE', ext_in='.i .h', ext_out='.o .c .cxx', shell=False)
 
 def runnable_status(self):
@@ -84,7 +84,7 @@ def scan(self):
 		# find .i files and project headers
 		names = re_2.findall(code) + re_3.findall(code)
 		for n in names:
-			for d in self.generator.swig_dir_nodes + [node.parent]:
+			for d in self.generator.env.INC_PATHS + [node.parent]:
 				u = d.find_resource(n)
 				if u:
 					to_see.append(u)
@@ -110,11 +110,15 @@ def swig_c(self):
 		ext += 'xx'
 	out_node = self.inputs[0].parent.find_or_declare(self.module + ext)
 
-	if '-c++' in flags:
-		task = self.generator.cxx_hook(out_node)
-	else:
-		task = self.generator.cc_hook(out_node)
+	try:
+		if '-c++' in flags:
+			fun = self.generator.cxx_hook
+		else:
+			fun = self.generator.c_hook
+	except AttributeError:
+		raise Utils.WafError('No c%s compiler was found to process swig files' % ('-c++' in flags and '++' or ''))
 
+	task = fun(out_node)
 	task.set_run_after(self)
 
 	ge = self.generator.bld.generator
@@ -143,28 +147,15 @@ def swig_ocaml(tsk):
 	tsk.set_outputs(tsk.inputs[0].parent.find_or_declare(tsk.module + '.ml'))
 	tsk.set_outputs(tsk.inputs[0].parent.find_or_declare(tsk.module + '.mli'))
 
-@taskgen
-@feature('swig')
-@after('apply_incpaths')
-def add_swig_paths(self):
-	"""the attribute 'after' is not used here, the method is added directly at the end"""
-
-	self.swig_dir_nodes = self.env['INC_PATHS']
-	include_flags = self.env['_CXXINCFLAGS'] or self.env['_CCINCFLAGS']
-	self.env.append_unique('SWIGFLAGS', [f.replace("/I", "-I") for f in include_flags])
-
 @extension(SWIG_EXTS)
 def i_file(self, node):
-	if not 'add_swig_paths' in self.meths:
-		self.meths.append('add_swig_paths')
-
 	# the task instance
 	tsk = self.create_task('swig')
 	tsk.set_inputs(node)
 	tsk.module = getattr(self, 'swig_module', None)
 
 	flags = self.to_list(getattr(self, 'swig_flags', []))
-	tsk.env['SWIGFLAGS'] = flags
+	self.env.append_value('SWIGFLAGS', flags)
 
 	if not '-outdir' in flags:
 		flags.append('-outdir')

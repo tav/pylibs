@@ -75,7 +75,7 @@ def apply_defines_cxx(self):
 
 	self.env['DEFLINES'] = ["%s %s" % (x[0], Utils.trimquotes('='.join(x[1:]))) for x in [y.split('=') for y in milst]]
 	y = self.env['CXXDEFINES_ST']
-	self.env['_CXXDEFFLAGS'] = [y%x for x in milst]
+	self.env.append_unique('_CXXDEFFLAGS', [y%x for x in milst])
 
 @extension(EXT_CXX)
 def cxx_hook(self, node):
