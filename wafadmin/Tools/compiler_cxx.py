@@ -28,13 +28,17 @@ def __list_possible_compiler(platform):
 def detect(conf):
 	try: test_for_compiler = Options.options.check_cxx_compiler
 	except AttributeError: raise Configure.ConfigurationError("Add set_options(opt): opt.tool_options('compiler_cxx')")
+	orig = conf.env
 	for compiler in test_for_compiler.split():
 		try:
+			conf.env = orig.copy()
 			conf.check_tool(compiler)
 		except Configure.ConfigurationError, e:
 			debug('compiler_cxx: %r' % e)
 		else:
 			if conf.env['CXX']:
+				orig.table = conf.env.get_merged_dict()
+				conf.env = orig
 				conf.check_message(compiler, '', True)
 				conf.env['COMPILER_CXX'] = compiler
 				break

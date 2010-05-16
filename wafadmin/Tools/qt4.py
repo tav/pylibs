@@ -21,7 +21,7 @@ else:
 
 import os, sys
 import ccroot, cxx
-import TaskGen, Task, Utils, Runner, Options, Node
+import TaskGen, Task, Utils, Runner, Options, Node, Configure
 from TaskGen import taskgen, feature, after, extension
 from Logs import error
 from Constants import *
@@ -96,31 +96,25 @@ class qxx_task(Task.Task):
 			if d in mocfiles:
 				error("paranoia owns")
 				continue
+
 			# process that base.moc only once
 			mocfiles.append(d)
 
-			# find the extension - this search is done only once
-			ext = ''
-			try: ext = Options.options.qt_header_ext
-			except AttributeError: pass
-
-			if not ext:
-				base2 = d[:-4]
-				paths = [node.parent.srcpath(self.env), node.parent.bldpath(self.env)]
-				poss = [(x, y) for x in MOC_H for y in paths]
-				for (i, path) in poss:
-					try:
-						# TODO we could use find_resource
-						os.stat(os.path.join(path, base2+i))
-					except OSError:
-						pass
-					else:
-						ext = i
+			# find the extension (performed only when the .cpp has changes)
+			base2 = d[:-4]
+			for path in [node.parent] + self.generator.env['INC_PATHS']:
+				tree.rescan(path)
+				vals = getattr(Options.options, 'qt_header_ext', '') or MOC_H
+				for ex in vals:
+					h_node = path.find_resource(base2 + ex)
+					if h_node:
 						break
-				if not ext: raise Utils.WafError("no header found for %s which is a moc file" % str(d))
+				else:
+					continue
+				break
+			else:
+				raise Utils.WafError("no header found for %s which is a moc file" % str(d))
 
-			# next time we will not search for the extension (look at the 'for' loop below)
-			h_node = node.parent.find_resource(base2+i)
 			m_node = h_node.change_ext('.moc')
 			tree.node_deps[(self.inputs[0].parent.id, self.env.variant(), m_node.name)] = h_node
 
@@ -217,6 +211,7 @@ def create_uic_task(self, node):
 	"hook for uic tasks"
 	uictask = self.create_task('ui4', node)
 	uictask.outputs = [self.path.find_or_declare(self.env['ui_PATTERN'] % node.name[:-3])]
+	return uictask
 
 class qt4_taskgen(cxx.cxx_taskgen):
 	def __init__(self, *k, **kw):
@@ -246,7 +241,8 @@ def apply_qt4(self):
 			if update:
 				trans.append(t.inputs[0])
 
-		if update and Options.options.trans_qt4:
+		trans_qt4 = getattr(Options.options, 'trans_qt4', False)
+		if update and trans_qt4:
 			# we need the cpp files given, except the rcc task we create after
 			# FIXME may be broken
 			u = Task.TaskCmd(translation_update, self.env, 2)
@@ -261,12 +257,8 @@ def apply_qt4(self):
 			k = create_rcc_task(self, t.outputs[0])
 			self.link_task.inputs.append(k.outputs[0])
 
-	lst = []
-	for flag in self.to_list(self.env['CXXFLAGS']):
-		if len(flag) < 2: continue
-		if flag[0:2] == '-D' or flag[0:2] == '-I':
-			lst.append(flag)
-	self.env['MOC_FLAGS'] = lst
+	self.env.append_value('MOC_FLAGS', self.env._CXXDEFFLAGS)
+	self.env.append_value('MOC_FLAGS', self.env._CXXINCFLAGS)
 
 @extension(EXT_QT4)
 def cxx_hook(self, node):
@@ -276,6 +268,7 @@ def cxx_hook(self, node):
 
 	task = self.create_task('qxx', node, node.change_ext(obj_ext))
 	self.compiled_tasks.append(task)
+	return task
 
 def process_qm2rcc(task):
 	outfile = task.outputs[0].abspath(task.env)
@@ -366,7 +359,7 @@ def detect_qt4(conf):
 
 	if not qtlibs:
 		try:
-			qtlibs = Utils.cmd_output([qmake, '-query', 'QT_LIBRARIES']).strip() + os.sep
+			qtlibs = Utils.cmd_output([qmake, '-query', 'QT_INSTALL_LIBS']).strip() + os.sep
 		except ValueError:
 			qtlibs = os.path.join(qtdir, 'lib')
 
@@ -409,12 +402,46 @@ def detect_qt4(conf):
 
 	vars_debug = [a+'_debug' for a in vars]
 
-	pkgconfig = env['pkg-config'] or 'PKG_CONFIG_PATH=%s:%s/pkgconfig:/usr/lib/qt4/lib/pkgconfig:/opt/qt4/lib/pkgconfig:/usr/lib/qt4/lib:/opt/qt4/lib pkg-config --silence-errors' % (qtlibs, qtlibs)
-	for i in vars_debug+vars:
-		try:
-			conf.check_cfg(package=i, args='--cflags --libs', path=pkgconfig)
-		except ValueError:
-			pass
+	try:
+		conf.find_program('pkg-config', var='pkgconfig', path_list=paths, mandatory=True)
+
+	except Configure.ConfigurationError:
+
+		for lib in vars_debug+vars:
+			uselib = lib.upper()
+
+			d = (lib.find('_debug') > 0) and 'd' or ''
+
+			# original author seems to prefer static to shared libraries
+			for (pat, kind) in ((conf.env.staticlib_PATTERN, 'STATIC'), (conf.env.shlib_PATTERN, '')):
+
+				conf.check_message_1('Checking for %s %s' % (lib, kind))
+
+				for ext in ['', '4']:
+					path = os.path.join(qtlibs, pat % (lib + d + ext))
+					if os.path.exists(path):
+						env.append_unique(kind + 'LIB_' + uselib, lib + d + ext)
+						conf.check_message_2('ok ' + path, 'GREEN')
+						break
+					path = os.path.join(qtbin, pat % (lib + d + ext))
+					if os.path.exists(path):
+						env.append_unique(kind + 'LIB_' + uselib, lib + d + ext)
+						conf.check_message_2('ok ' + path, 'GREEN')
+						break
+				else:
+					conf.check_message_2('not found', 'YELLOW')
+					continue
+				break
+
+			env.append_unique('LIBPATH_' + uselib, qtlibs)
+			env.append_unique('CPPPATH_' + uselib, qtincludes)
+			env.append_unique('CPPPATH_' + uselib, qtincludes + os.sep + lib)
+	else:
+		for i in vars_debug+vars:
+			try:
+				conf.check_cfg(package=i, args='--cflags --libs --silence-errors', path=conf.env.pkgconfig)
+			except ValueError:
+				pass
 
 	# the libpaths are set nicely, unfortunately they make really long command-lines
 	# remove the qtcore ones from qtgui, etc
@@ -436,7 +463,8 @@ def detect_qt4(conf):
 	process_lib(vars_debug, 'LIBPATH_QTCORE_DEBUG')
 
 	# rpath if wanted
-	if Options.options.want_rpath:
+	want_rpath = getattr(Options.options, 'want_rpath', 1)
+	if want_rpath:
 		def process_rpath(vars_, coreval):
 			for d in vars_:
 				var = d.upper()

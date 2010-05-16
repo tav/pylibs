@@ -201,19 +201,20 @@ def configure(conf):
 
 	src = getattr(Options.options, SRCDIR, None)
 	if not src: src = getattr(Utils.g_module, SRCDIR, None)
+	if not src: src = getattr(Utils.g_module, 'top', None)
 	if not src:
 		src = '.'
 		incomplete_src = 1
 	src = os.path.abspath(src)
 
 	bld = getattr(Options.options, BLDDIR, None)
-	if not bld:
-		bld = getattr(Utils.g_module, BLDDIR, None)
-		if bld == '.':
-			raise Utils.WafError('Setting blddir="." may cause distclean problems')
+	if not bld: bld = getattr(Utils.g_module, BLDDIR, None)
+	if not bld: bld = getattr(Utils.g_module, 'out', None)
 	if not bld:
 		bld = 'build'
 		incomplete_bld = 1
+	if bld == '.':
+		raise Utils.WafError('Setting blddir="." may cause distclean problems')
 	bld = os.path.abspath(bld)
 
 	try: os.makedirs(bld)
@@ -411,14 +412,14 @@ def build_impl(bld):
 
 	bld.install()
 
-excludes = '.bzr .bzrignore .git .gitignore .svn CVS .cvsignore .arch-ids {arch} SCCS BitKeeper .hg _MTN _darcs Makefile Makefile.in config.log'.split()
+excludes = '.bzr .bzrignore .git .gitignore .svn CVS .cvsignore .arch-ids {arch} SCCS BitKeeper .hg _MTN _darcs Makefile Makefile.in config.log .gitattributes .hgignore .hgtags'.split()
 dist_exts = '~ .rej .orig .pyc .pyo .bak .tar.bz2 tar.gz .zip .swp'.split()
 def dont_dist(name, src, build_dir):
 	global excludes, dist_exts
 
 	if (name.startswith(',,')
 		or name.startswith('++')
-		or name.startswith('.waf-1.')
+		or name.startswith('.waf')
 		or (src == '.' and name == Options.lockfile)
 		or name in excludes
 		or name == build_dir
@@ -476,7 +477,7 @@ def distclean(ctx=None):
 					Logs.warn('file %r cannot be removed' % f)
 
 		# remove the local waf cache
-		if not commands and f.startswith('.waf-'):
+		if not commands and f.startswith('.waf'):
 			shutil.rmtree(f, ignore_errors=True)
 
 # FIXME waf 1.6 a unique ctx parameter, and remove the optional appname and version
@@ -485,11 +486,14 @@ def dist(appname='', version=''):
 	# return return (distdirname, tarballname)
 	import tarfile
 
-	if not appname: appname = getattr(Utils.g_module, APPNAME, 'noname')
-	if not version: version = getattr(Utils.g_module, VERSION, '1.0')
+	if not appname: appname = Utils.g_module.APPNAME
+	if not version: version = Utils.g_module.VERSION
 
 	tmp_folder = appname + '-' + version
-	arch_name = tmp_folder+'.tar.'+g_gz
+	if g_gz in ['gz', 'bz2']:
+		arch_name = tmp_folder + '.tar.' + g_gz
+	else:
+		arch_name = tmp_folder + '.' + 'zip'
 
 	# remove the previous dir
 	try:
@@ -504,7 +508,10 @@ def dist(appname='', version=''):
 		pass
 
 	# copy the files into the temporary folder
-	copytree('.', tmp_folder, getattr(Utils.g_module, BLDDIR, None))
+	blddir = getattr(Utils.g_module, BLDDIR, None)
+	if not blddir:
+		blddir = getattr(Utils.g_module, 'out', None)
+	copytree('.', tmp_folder, blddir)
 
 	# undocumented hook for additional cleanup
 	dist_hook = getattr(Utils.g_module, 'dist_hook', None)
@@ -517,9 +524,12 @@ def dist(appname='', version=''):
 			# go back to the root directory
 			os.chdir(back)
 
-	tar = tarfile.open(arch_name, 'w:' + g_gz)
-	tar.add(tmp_folder)
-	tar.close()
+	if g_gz in ['gz', 'bz2']:
+		tar = tarfile.open(arch_name, 'w:' + g_gz)
+		tar.add(tmp_folder)
+		tar.close()
+	else:
+		Utils.zip_folder(tmp_folder, arch_name, tmp_folder)
 
 	try: from hashlib import sha1 as sha
 	except ImportError: from sha import sha
@@ -534,23 +544,34 @@ def dist(appname='', version=''):
 	return arch_name
 
 # FIXME waf 1.6 a unique ctx parameter, and remove the optional appname and version
-def distcheck(appname='', version=''):
+def distcheck(appname='', version='', subdir=''):
 	'''checks if the sources compile (tarball from 'dist')'''
 	import tempfile, tarfile
 
-	if not appname: appname = getattr(Utils.g_module, APPNAME, 'noname')
-	if not version: version = getattr(Utils.g_module, VERSION, '1.0')
+	if not appname: appname = Utils.g_module.APPNAME
+	if not version: version = Utils.g_module.VERSION
 
 	waf = os.path.abspath(sys.argv[0])
 	tarball = dist(appname, version)
+
+	path = appname + '-' + version
+
+	# remove any previous instance
+	if os.path.exists(path):
+		shutil.rmtree(path)
+
 	t = tarfile.open(tarball)
 	for x in t: t.extract(x)
 	t.close()
 
-	path = appname + '-' + version
+	# build_path is the directory for the waf invocation
+	if subdir:
+		build_path = os.path.join(path, subdir)
+	else:
+		build_path = path
 
 	instdir = tempfile.mkdtemp('.inst', '%s-%s' % (appname, version))
-	ret = Utils.pproc.Popen([waf, 'configure', 'install', 'uninstall', '--destdir=' + instdir], cwd=path).wait()
+	ret = Utils.pproc.Popen([waf, 'configure', 'build', 'install', 'uninstall', '--destdir=' + instdir], cwd=build_path).wait()
 	if ret:
 		raise Utils.WafError('distcheck failed with code %i' % ret)
 

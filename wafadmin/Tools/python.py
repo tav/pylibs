@@ -55,7 +55,7 @@ def init_pyembed(self):
 
 @extension(EXT_PY)
 def process_py(self, node):
-	if not (self.bld.is_install or self.install_path):
+	if not (self.bld.is_install and self.install_path):
 		return
 	def inst_py(ctx):
 		install_pyfile(self, node)
@@ -122,7 +122,7 @@ def _get_python_variables(python_exe, variables, imports=['import sys']):
 	except KeyError:
 		pass
 	proc = Utils.pproc.Popen([python_exe, "-c", '\n'.join(program)], stdout=Utils.pproc.PIPE, env=os_env)
-	output = proc.communicate()[0].split("\n")
+	output = proc.communicate()[0].split("\n") # do not touch, python3
 	if proc.returncode:
 		if Options.options.verbose:
 			warn("Python program to extract python configuration variables failed:\n%s"
@@ -203,11 +203,13 @@ MACOSX_DEPLOYMENT_TARGET = %r
 			if lib.startswith('-l'):
 				lib = lib[2:] # strip '-l'
 			env.append_value('LIB_PYEMBED', lib)
+
 	if python_SHLIBS is not None:
 		for lib in python_SHLIBS.split():
 			if lib.startswith('-l'):
-				lib = lib[2:] # strip '-l'
-			env.append_value('LIB_PYEMBED', lib)
+				env.append_value('LIB_PYEMBED', lib[2:]) # strip '-l'
+			else:
+				env.append_value('LINKFLAGS_PYEMBED', lib)
 
 	if Options.platform != 'darwin' and python_LDFLAGS:
 		env.append_value('LINKFLAGS_PYEMBED', python_LDFLAGS.split())
@@ -283,17 +285,8 @@ MACOSX_DEPLOYMENT_TARGET = %r
 		env.append_value('CXXFLAGS_PYEXT', '-fno-strict-aliasing')
 
 	# See if it compiles
-	test_env = env.copy()
-	a = test_env.append_value
-	a('CPPPATH', env['CPPPATH_PYEMBED'])
-	a('LIBPATH', env['LIBPATH_PYEMBED'])
-	a('LIB', env['LIB_PYEMBED'])
-	a('LINKFLAGS', env['LINKFLAGS_PYEMBED'])
-	a('CXXFLAGS', env['CXXFLAGS_PYEMBED'])
-	a('CCFLAGS', env['CCFLAGS_PYEMBED'])
-
 	conf.check(header_name='Python.h', define_name='HAVE_PYTHON_H',
-		   env=test_env, fragment=FRAG_2,
+		   uselib='PYEMBED', fragment=FRAG_2,
 		   errmsg='Could not find the python development headers', mandatory=1)
 
 @conf
@@ -360,10 +353,10 @@ def check_python_version(conf, minver=None):
 		conf.check_message_custom('Python version', '', pyver_full)
 	else:
 		minver_str = '.'.join(map(str, minver))
-		conf.check_message('Python version', ">= %s" % (minver_str,), result, option=pyver_full)
+		conf.check_message('Python version', ">= %s" % minver_str, result, option=pyver_full)
 
 	if not result:
-		conf.fatal('The python version is too old (%r)' % minver)
+		conf.fatal('The python version is too old (%r)' % pyver_full)
 
 @conf
 def check_python_module(conf, module_name):

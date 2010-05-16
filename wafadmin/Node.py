@@ -30,8 +30,8 @@ ${TGT[0].abspath(env)} -> /path/to/dir/to/file.ext
 
 """
 
-import os, sys, fnmatch, re
-import Utils
+import os, sys, fnmatch, re, stat
+import Utils, Constants
 
 UNDEFINED = 0
 DIR = 1
@@ -129,6 +129,7 @@ class Node(object):
 		return self.id & 3
 
 	def set_type(self, t):
+		"dangerous, you are not supposed to use this"
 		self.id = self.id + t - self.id & 3
 
 	def dirs(self):
@@ -204,7 +205,7 @@ class Node(object):
 		if node:
 			tp = node.id & 3
 			if tp != BUILD:
-				raise Utils.WafError("find_or_declare returns a build node, not a source nor a directory %r" % lst)
+				raise Utils.WafError('find_or_declare cannot return a build node (build files in the source directory %r?)' % lst)
 			return node
 		node = self.__class__(name, parent, BUILD)
 		return node
@@ -461,8 +462,9 @@ class Node(object):
 		"path seen from the build dir default/src/foo.cpp"
 		if self.id & 3 == FILE:
 			return self.relpath_gen(self.__class__.bld.bldnode)
-		if self.path_to_parent(self.__class__.bld.srcnode) is not '':
-			return os.path.join(env.variant(), self.path_to_parent(self.__class__.bld.srcnode))
+		p = self.path_to_parent(self.__class__.bld.srcnode)
+		if p is not '':
+			return env.variant() + os.sep + p
 		return env.variant()
 
 	def srcpath(self, env=None):
@@ -493,7 +495,7 @@ class Node(object):
 		return self.name[k:]
 
 	def find_iter_impl(self, src=True, bld=True, dir=True, accept_name=None, is_prune=None, maxdepth=25):
-		"find nodes in the filesystem hierarchy, try to instanciate the nodes passively"
+		"""find nodes in the filesystem hierarchy, try to instanciate the nodes passively; same gotcha as ant_glob"""
 		bld_ctx = self.__class__.bld
 		bld_ctx.rescan(self)
 		for name in bld_ctx.cache_dir_contents[self.id]:
@@ -532,7 +534,7 @@ class Node(object):
 		raise StopIteration
 
 	def find_iter(self, in_pat=['*'], ex_pat=exclude_pats, prune_pat=prune_pats, src=True, bld=True, dir=False, maxdepth=25, flat=False):
-		"find nodes recursively, this returns everything but folders by default"
+		"""find nodes recursively, this returns everything but folders by default; same gotcha as ant_glob"""
 
 		if not (src or bld or dir):
 			raise StopIteration
@@ -566,9 +568,12 @@ class Node(object):
 		return ret
 
 	def ant_glob(self, *k, **kw):
+		"""
+		known gotcha: will enumerate the files, but only if the folder exists in the source directory
+		"""
 
 		src=kw.get('src', 1)
-		bld=kw.get('bld', 1)
+		bld=kw.get('bld', 0)
 		dir=kw.get('dir', 0)
 		excl = kw.get('excl', exclude_regs)
 		incl = k and k[0] or kw.get('incl', '**')
@@ -652,6 +657,36 @@ class Node(object):
 			return " ".join([x.relpath_gen(self) for x in ret])
 
 		return ret
+
+	def update_build_dir(self, env=None):
+
+		if not env:
+			for env in bld.all_envs:
+				self.update_build_dir(env)
+			return
+
+		path = self.abspath(env)
+
+		lst = Utils.listdir(path)
+		try:
+			self.__class__.bld.cache_dir_contents[self.id].update(lst)
+		except KeyError:
+			self.__class__.bld.cache_dir_contents[self.id] = set(lst)
+		self.__class__.bld.cache_scanned_folders[self.id] = True
+
+		for k in lst:
+			npath = path + os.sep + k
+			st = os.stat(npath)
+			if stat.S_ISREG(st[stat.ST_MODE]):
+				ick = self.find_or_declare(k)
+				if not (ick.id in self.__class__.bld.node_sigs[env.variant()]):
+					self.__class__.bld.node_sigs[env.variant()][ick.id] = Constants.SIG_NIL
+			elif stat.S_ISDIR(st[stat.ST_MODE]):
+				child = self.find_dir(k)
+				if not child:
+					child = self.ensure_dir_node_from_path(k)
+				child.update_build_dir(env)
+
 
 class Nodu(Node):
 	pass

@@ -98,10 +98,9 @@ def r7(code):
 	code = code.replace('class task_gen(object):\n\t__metaclass__=register_obj', 'class task_gen(object, metaclass=register_obj):')
 	return code
 
-@subst('Tools/config_c.py')
 @subst('Tools/python.py')
 def r8(code):
-	code = code.replace('p.communicate()[0]', 'p.communicate()[0].decode("utf-8")')
+	code = code.replace('proc.communicate()[0]', 'proc.communicate()[0].decode("utf-8")')
 	return code
 
 @subst('Tools/glib2.py')
@@ -109,6 +108,10 @@ def r9(code):
 	code = code.replace('f.write(c)', 'f.write(c.encode("utf-8"))')
 	return code
 
+@subst('Tools/config_c.py')
+def r10(code):
+	code = code.replace("key=kw['success']", "key=kw['success']\n\t\t\t\ttry:\n\t\t\t\t\tkey=key.decode('utf-8')\n\t\t\t\texcept:\n\t\t\t\t\tpass")
+	return code
 
 def fixdir(dir):
 	global all_modifs
