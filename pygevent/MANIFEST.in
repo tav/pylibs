@@ -1,0 +1,10 @@
+recursive-include greentest *
+recursive-include examples *
+recursive-include gevent *
+recursive-include doc *
+include LICENSE
+include LICENSE.pyevent
+include README.rst
+include TODO
+include changelog.rst
+include MANIFEST.in

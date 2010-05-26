@@ -31,11 +31,25 @@ setup(
     )
 
 pylibs_path = dirname(realpath(__file__))
+ssl_path = join_path(pylibs_path, 'pyssl')
 
-ssl_path = join_path(pylibs_path, 'ssl')
+for path in [ssl_path]:
+    run_command(
+        [sys.executable, join_path(path, 'setup.py'), 'build_ext', '-i'],
+        exit_on_error=True, cwd=join_path(path), redirect_stdout=False,
+        redirect_stderr=False
+        )
+
+gevent_path = join_path(pylibs_path, 'pygevent')
+ampify_root = dirname(dirname(pylibs_path))
+ampify_include = join_path(ampify_root, 'environ', 'local', 'include')
+ampify_lib = join_path(ampify_root, 'environ', 'local', 'lib')
 
 run_command(
-    [sys.executable, join_path(ssl_path, 'setup.py'), 'build_ext', '-i'],
-    exit_on_error=True, cwd=join_path(ssl_path), redirect_stdout=False,
+    [sys.executable, join_path(gevent_path, 'setup.py'), 'build_ext', '-i',
+     '-I%s' % ampify_include, '-L%s' % ampify_lib],
+    exit_on_error=True, cwd=join_path(gevent_path), redirect_stdout=False,
     redirect_stderr=False
     )
+
+print "Python extension modules successfully compiled."
