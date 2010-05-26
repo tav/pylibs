@@ -13,6 +13,7 @@ from pyutil.env import run_command
 
 extensions = [
     Extension("simplejson._speedups", ["simplejson/_speedups.c"]),
+    Extension('greenlet', ['greenlet/greenlet.c'], include_dirs=['greenlet'])
     ]
 
 # ------------------------------------------------------------------------------
@@ -29,10 +30,12 @@ setup(
     ext_modules=extensions,
     )
 
-pycrypto_path = join_path(dirname(realpath(__file__)), 'pycrypto')
+pylibs_path = dirname(realpath(__file__))
+
+ssl_path = join_path(pylibs_path, 'ssl')
 
 run_command(
-    [sys.executable, join_path(pycrypto_path, 'setup.py'), 'build_ext', '-i'],
-    exit_on_error=True, cwd=join_path(pycrypto_path), redirect_stdout=False,
+    [sys.executable, join_path(ssl_path, 'setup.py'), 'build_ext', '-i'],
+    exit_on_error=True, cwd=join_path(ssl_path), redirect_stdout=False,
     redirect_stderr=False
     )
