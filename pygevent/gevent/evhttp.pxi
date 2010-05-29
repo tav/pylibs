@@ -58,17 +58,15 @@ cdef extern from "libevent.h":
     int       evhttp_bind_socket(evhttp *http, char* address, int port)
     int       evhttp_accept_socket(evhttp *http, int fd)
     void      evhttp_free(evhttp* http)
-    int       EVHTTP_SET_CB(evhttp *http, char *uri,
-                           evhttp_handler handler, void *arg)
-    void      evhttp_set_gencb(evhttp *http,
-                           evhttp_handler handler, void *arg)
+    int       EVHTTP_SET_CB(evhttp *http, char *uri, evhttp_handler handler, void *arg)
+    void      evhttp_set_gencb(evhttp *http, evhttp_handler handler, void *arg)
     void      evhttp_del_cb(evhttp *http, char *uri)
 
     # request
     ctypedef void (*evhttp_request_cb)(evhttp_request *r, void *arg)
 
     evhttp_request *evhttp_request_new(evhttp_request_cb reqcb, void *arg)
-    void            evhttp_request_free(evhttp_request *r)
+    void      evhttp_request_free(evhttp_request *r)
 
     void      evhttp_send_reply(evhttp_request *req, int status, char* reason, evbuffer* buf)
     void      evhttp_send_reply_start(evhttp_request *req, int status, char *reason)
@@ -111,10 +109,20 @@ cdef class http_request:
     # It is possible to crash the process by using it directly.
     # prefer gevent.http and gevent.wsgi which should be safe
 
+    cdef object __weakref__
     cdef evhttp_request* __obj
+    cdef object _input_buffer
+    cdef object _output_buffer
+    cdef public int _default_response_code
 
     def __init__(self, size_t _obj):
         self.__obj = <evhttp_request*>_obj
+        self._default_response_code = 500
+
+    def __dealloc__(self):
+        if self.__obj:
+            report_internal_error(self.__obj, self._default_response_code)
+            self.__obj = NULL
 
     property _obj:
 
@@ -129,30 +137,40 @@ cdef class http_request:
 
     def detach(self):
         self.__obj = NULL
+        if self._input_buffer is not None:
+            self._input_buffer.detach()
+        if self._output_buffer is not None:
+            self._output_buffer.detach()
 
     def _format(self):
         args = (self.typestr, self.uri, self.major, self.minor,
                 self.remote_host, self.remote_port)
         res = '"%s %s HTTP/%s.%s" %s:%s' % args
         if self.response_code:
-            res += 'response=%s' % self.response_code
+            res += ' response=%s' % self.response_code
         if self.input_buffer:
-            res += 'input=%s' % len(self.input_buffer)
+            res += ' input=%s' % len(self.input_buffer)
         if self.output_buffer:
-            res += 'output=%s' % len(self.output_buffer)
+            res += ' output=%s' % len(self.output_buffer)
         return res
 
     def __str__(self):
-        if self.__obj:
-            return '<%s %s>' % (self.__class__.__name__, self._format())
-        else:
-            return '<%s deleted>' % self.__class__.__name__
+        try:
+            info = self._format()
+        except HttpRequestDeleted:
+            info = 'deleted'
+        except Exception, ex:
+            info = str(ex) or repr(ex) or '<Error>'
+        return '<%s %s>' % (self.__class__.__name__, info)
 
     def __repr__(self):
-        if self.__obj:
-            return '<%s _obj=0x%x %s>' % (self.__class__.__name__, self._obj, self._format())
-        else:
-            return '<%s _obj=0x%x>' % (self.__class__.__name__, self._obj)
+        try:
+            info = ' ' + self._format()
+        except HttpRequestDeleted:
+            info = ''
+        except Exception, ex:
+            info = ' ' + (str(ex) or repr(ex) or '<Error>')
+        return '<%s _obj=0x%x %s>' % (self.__class__.__name__, self._obj, info)
 
     def get_input_headers(self):
         if not self.__obj:
@@ -193,8 +211,6 @@ cdef class http_request:
     property remote:
 
         def __get__(self):
-            if not self.__obj:
-                raise HttpRequestDeleted
             return (self.remote_host, self.remote_port)
 
     property kind:
@@ -265,8 +281,6 @@ cdef class http_request:
     property response:
 
         def __get__(self):
-            if not self.__obj:
-                raise HttpRequestDeleted
             return (self.response_code, self.response_code_line)
 
     property chunked:
@@ -279,16 +293,22 @@ cdef class http_request:
     property input_buffer:
 
         def __get__(self):
+            if self._input_buffer is not None:
+                return self._input_buffer
             if not self.__obj:
                 raise HttpRequestDeleted
-            return buffer(<size_t>self.__obj.input_buffer)
+            self._input_buffer = buffer(<size_t>self.__obj.input_buffer)
+            return self._input_buffer
 
     property output_buffer:
 
         def __get__(self):
+            if self._output_buffer is not None:
+                return self._output_buffer
             if not self.__obj:
                 raise HttpRequestDeleted
-            return buffer(<size_t>self.__obj.output_buffer)
+            self._output_buffer = buffer(<size_t>self.__obj.output_buffer)
+            return self._output_buffer
 
     def send_reply(self, int code, char *reason, object buf):
         if not self.__obj:
@@ -363,13 +383,13 @@ cdef class http_request:
         """Return True if header was found and removed"""
         if not self.__obj:
             raise HttpRequestDeleted
-        return True if 0==evhttp_remove_header(self.__obj.input_headers, key) else False
+        return True if 0 == evhttp_remove_header(self.__obj.input_headers, key) else False
 
     def remove_output_header(self, char* key):
         """Return True if header was found and removed"""
         if not self.__obj:
             raise HttpRequestDeleted
-        return True if 0==evhttp_remove_header(self.__obj.output_headers, key) else False
+        return True if 0 == evhttp_remove_header(self.__obj.output_headers, key) else False
 
     def clear_input_headers(self):
         if not self.__obj:
@@ -380,19 +400,6 @@ cdef class http_request:
         if not self.__obj:
             raise HttpRequestDeleted
         evhttp_clear_headers(self.__obj.output_headers)
-
-
-cdef void _http_connection_closecb_handler(evhttp_connection* connection, void *arg) with gil:
-    try:
-        server = <object>arg
-        conn = http_connection(<size_t>connection)
-        server._cb_connection_close(conn)
-    except:
-        traceback.print_exc()
-        try:
-            sys.stderr.write('Failed to execute callback for evhttp connection:\n  connection = %s\n server = %s\n\n' % (conn, server))
-        except:
-            pass
 
 
 cdef class http_connection:
@@ -414,16 +421,18 @@ cdef class http_connection:
             return False
 
     def __str__(self):
-        if self.__obj:
-            return '<%s %s>' % (self.__class__.__name__, self.peer)
-        else:
-            return '<%s deleted>' % (self.__class__.__name__)
+        try:
+            peer = self.peer
+        except HttpConnectionDeleted:
+            peer = 'deleted'
+        return '<%s %s>' % (self.__class__.__name__, peer)
 
     def __repr__(self):
-        if self.__obj:
-            return '<%s _obj=0x%x %s>' % (self.__class__.__name__, self._obj, self.peer)
-        else:
-            return '<%s _obj=0x%x>' % (self.__class__.__name__, self._obj)
+        try:
+            peer = ' %s' % (self.peer, )
+        except HttpConnectionDeleted:
+            peer = ''
+        return '<%s _obj=0x%x%s>' % (self.__class__.__name__, self._obj, peer)
 
     property peer:
 
@@ -439,46 +448,74 @@ cdef class http_connection:
                 addr = None
             return (addr, port)
 
-    def set_closecb(self, callback):
-        if not self.__obj:
-            raise HttpConnectionDeleted
-        evhttp_connection_set_closecb(self.__obj, _http_connection_closecb_handler, <void *>callback)
-
 
 cdef void _http_cb_handler(evhttp_request* request, void *arg) with gil:
-    cdef object callback = <object>arg
+    cdef http server = <object>arg
+    cdef http_request req = http_request(<size_t>request)
+    cdef evhttp_connection* conn = request.evcon
+    cdef object requests
     try:
-        r = http_request(<size_t>request)
-        callback(r)
+        evhttp_connection_set_closecb(conn, _http_closecb_handler, arg)
+        requests = server._requests.pop(<size_t>conn, None)
+        if requests is None:
+            requests = weakref.WeakKeyDictionary()
+            server._requests[<size_t>conn] = requests
+        requests[req] = True
+        server.handle(req)
     except:
         traceback.print_exc()
         try:
-            sys.stderr.write('Failed to execute callback for evhttp request:\n  request = %s\n callback = %s\n\n' % (r, callback))
+            sys.stderr.write('%s: Failed to handle request: %s\n\n' % (server, req, ))
         except:
-            pass
-        if request.response_code == 0:
-            report_internal_error(request)
+            traceback.print_exc()
+        # without clearing exc_info a reference to the request is somehow leaked
+        sys.exc_clear()
 
 
-cdef void report_internal_error(evhttp_request* request):
-    cdef evbuffer*  c_buf = evbuffer_new()
-    evbuffer_add(c_buf, "<h1>Internal Server Error</h1>", 30)
-    evhttp_send_reply(request, 500, "Internal Server Error", c_buf)
-    evbuffer_free(c_buf)
+cdef void _http_closecb_handler(evhttp_connection* connection, void *arg) with gil:
+    cdef http server = <object>arg
+    cdef object requests
+    for request in server._requests.pop(<size_t>connection, {}).keys():
+        request.detach()
+
+
+cdef void _http_cb_reply_error(evhttp_request* request, void *arg):
+    report_internal_error(request, 500)
+
+
+cdef void report_internal_error(evhttp_request* request, int code):
+    cdef evbuffer* c_buf
+    if request != NULL and request.response_code == 0:
+        evhttp_add_header(request.output_headers, "Connection", "close")
+        evhttp_add_header(request.output_headers, "Content-type", "text/plain")
+        c_buf = evbuffer_new()
+        if code == 503:
+            evhttp_add_header(request.output_headers, "Content-length", "31")
+            evbuffer_add(c_buf, "Service Temporarily Unavailable", 31)
+            evhttp_send_reply(request, 503, "Service Unavailable", c_buf)
+        else:
+            evhttp_add_header(request.output_headers, "Content-length", "21")
+            evbuffer_add(c_buf, "Internal Server Error", 21)
+            evhttp_send_reply(request, 500, "Internal Server Error", c_buf)
+        evbuffer_free(c_buf)
 
 
 cdef class http:
     cdef evhttp* __obj
     cdef object _gencb
-    cdef list _cbs
+    cdef object handle
+    cdef dict _requests
 
-    def __init__(self):
-        self.__obj = evhttp_new(current_base)
+    def __init__(self, handle):
+        self.handle = handle
         self._gencb = None
-        self._cbs = []
+        self._requests = {} # maps connection id to WeakKeyDictionary which holds requests
+        self.__obj = evhttp_new(current_base)
+        evhttp_set_gencb(self.__obj, _http_cb_handler, <void *>self)
 
     def __dealloc__(self):
         if self.__obj != NULL:
+            evhttp_set_gencb(self.__obj, _http_cb_reply_error, NULL)
             evhttp_free(self.__obj)
         self.__obj = NULL
 
@@ -496,30 +533,10 @@ cdef class http:
     def bind(self, char* address='127.0.0.1', int port=80):
         cdef int res = evhttp_bind_socket(self.__obj, address, port)
         if res:
-            raise RuntimeError('Cannot bind %s:%s' % (address, port))
+            raise RuntimeError('evhttp_bind_socket(%r, %r) returned %r' % (address, port, res))
 
     def accept(self, int fd):
         cdef res = evhttp_accept_socket(self.__obj, fd)
         if res:
-            raise RuntimeError("evhttp_accept_socket(%s) returned %s" % (fd, res))
-
-    def start(cls, char* address='127.0.0.1', int port=80):
-        #cdef evhttp* obj = evhttp_start(address, port)
-        #if obj:
-        #    return cls(<size_t>obj)
-        raise RuntimeError('evhttp_start failed')
-
-    def set_cb(self, char* path, object callback):
-        cdef res = EVHTTP_SET_CB(self.__obj, path, _http_cb_handler, <void *>callback)
-        if res == 0:
-            self._cbs.append(callback)
-            return
-        elif res == -1:
-            raise RuntimeError('evhttp_set_cb(%r, %r) returned %s: callback already exists' % (path, callback, res))
-        else:
-            raise RuntimeError('evhttp_set_cb(%r, %r) returned %s' % (path, callback, res))
-
-    def set_gencb(self, callback):
-        self._gencb = callback
-        evhttp_set_gencb(self.__obj, _http_cb_handler, <void *>callback)
+            raise RuntimeError("evhttp_accept_socket(%r) returned %r" % (fd, res))
 

@@ -5,7 +5,6 @@ import traceback
 from gevent import core
 from gevent.hub import greenlet, getcurrent, get_hub, GreenletExit, Waiter, kill
 from gevent.timeout import Timeout
-from gevent.util import lazy_property
 
 
 __all__ = ['Greenlet',
@@ -157,26 +156,32 @@ class Greenlet(greenlet):
         self._notifier = None
         self._start_event = None
 
+    @property
+    def started(self):
+        return self._start_event is not None or bool(self)
+
     def ready(self):
         """Return true if and only if the greenlet has finished execution."""
         return self.dead or self._exception is not _NONE
 
     def successful(self):
         """Return true if and only if the greenlet has finished execution successfully,
-        that is, without raising an error.
-        """
+        that is, without raising an error."""
         return self._exception is None
 
     def __repr__(self):
         classname = self.__class__.__name__
         result = '<%s at %s' % (classname, hex(id(self)))
-        formatted = self._formatted_info
-        if formatted is not None:
+        formatted = self._formatinfo()
+        if formatted:
             result += ': ' + formatted
         return result + '>'
 
-    @lazy_property
-    def _formatted_info(self):
+    def _formatinfo(self):
+        try:
+            return self._formatted_info
+        except AttributeError:
+            pass
         try:
             result = getfuncname(self.__dict__['_run'])
         except Exception:
@@ -186,10 +191,13 @@ class Greenlet(greenlet):
             if self.args:
                 args = [repr(x)[:50] for x in self.args]
             if self.kwargs:
-                args.extend(['%s=%r' % x for x in self.kwargs.items()])
+                args.extend(['%s=%s' % (key, repr(value)[:50]) for (key, value) in self.kwargs.items()])
             if args:
                 result += '(' + ', '.join(args) + ')'
+            # it is important to save the result here, because once the greenlet exits '_run' attribute will be removed
+            self._formatted_info = result
             return result
+        return ''
 
     @property
     def exception(self):
@@ -204,43 +212,41 @@ class Greenlet(greenlet):
 
         Should only be called from the HUB, otherwise the current greenlet is left unscheduled forever.
         To raise an exception in a safely manner from any greenlet, use :meth:`kill`.
+
+        If a greenlet was started but never switched to yet, then also
+        a) cancel the event that will start it
+        b) fire the notifications as if an exception was raised in a greenlet
         """
         if self._start_event is not None:
             self._start_event.cancel()
             self._start_event = None
-        if not self.dead:
-            if self:
-                return greenlet.throw(self, *args)
-            else:
-                # special case for when greenlet is not yet started, because _report_error is not executed
+        try:
+            greenlet.throw(self, *args)
+        finally:
+            if self._exception is _NONE and self.dead:
+                # the greenlet was not started yet, so _report_error was not called, so
+                # the result was not set and the links weren't notified. let's do it here.
+                # checking that self.dead is true is essential, because the exception raised by
+                # throw() could have been cancelled by the greenlet's function.
                 if len(args)==1:
-                    self._exception = args[0]
+                    arg = args[0]
+                    #if isinstance(arg, type):
+                    if type(arg) is type(Exception):
+                        args = (arg, arg(), None)
+                    else:
+                        args = (type(arg), arg, None)
                 elif not args:
-                    self._exception = GreenletExit()
-                else:
-                    self._exception = args[1]
-                try:
-                    try:
-                        # Even though the greenlet is not yet started, we calling throw() here
-                        # so that its 'dead' attribute becomes True
-                        return greenlet.throw(self, *args)
-                    except:
-                        # since this function is called from the Hub, which is the parent of *greenlet*
-                        # the above statement will re-reraise here whatever we've thrown in it
-                        # this traceback is useless, so we silent it
-                        pass
-                finally:
-                    if self._links and self._notifier is None:
-                        self._notifier = core.active_event(self._notify_links)
+                    args = (GreenletExit, GreenletExit(), None)
+                self._report_error(args)
 
     def start(self):
         """Schedule the greenlet to run in this loop iteration"""
-        assert self._start_event is None, 'Greenlet already started'
+        assert not self.started, 'Greenlet already started'
         self._start_event = core.active_event(self.switch)
 
     def start_later(self, seconds):
         """Schedule the greenlet to run in the future loop iteration *seconds* later"""
-        assert self._start_event is None, 'Greenlet already started'
+        assert not self.started, 'Greenlet already started'
         self._start_event = core.timer(seconds, self.switch)
 
     @classmethod
@@ -281,20 +287,25 @@ class Greenlet(greenlet):
         g.link_exception()
         return g
 
-    def kill(self, exception=GreenletExit, block=False, timeout=None):
+    def kill(self, exception=GreenletExit, block=True, timeout=None):
         """Raise the exception in the greenlet.
 
-        If block is ``False`` (the default), the current greenlet is not unscheduled.
-        If block is ``True``, wait until the greenlet dies or the optional timeout expires.
+        If block is ``True`` (the default), wait until the greenlet dies or the optional timeout expires.
+        If block is ``False``, the current greenlet is not unscheduled.
 
         Return ``None``.
         """
+        if self._start_event is not None:
+            self._start_event.cancel()
+            self._start_event = None
         if not self.dead:
             waiter = Waiter()
             core.active_event(_kill, self, exception, waiter)
             if block:
                 waiter.wait()
                 self.join(timeout)
+        # it should be OK to use kill() in finally or kill a greenlet from more than one place;
+        # thus it should not raise when the greenlet is already killed (= not started)
 
     def get(self, block=True, timeout=None):
         """Return the result the greenlet has returned or re-raise the exception it has raised.
@@ -365,16 +376,20 @@ class Greenlet(greenlet):
             self._notifier = core.active_event(self._notify_links)
 
     def _report_error(self, exc_info):
+        exception = exc_info[1]
+        if isinstance(exception, GreenletExit):
+            self._report_result(exception)
+            return
         try:
-            if exc_info[0] is not None:
-                traceback.print_exception(*exc_info)
-        finally:
-            self._exception = exc_info[1]
-            if self._links and self._notifier is None:
-                self._notifier = core.active_event(self._notify_links)
+            traceback.print_exception(*exc_info)
+        except:
+            pass
+        self._exception = exception
+
+        if self._links and self._notifier is None:
+            self._notifier = core.active_event(self._notify_links)
 
         info = str(self) + ' failed with '
-
         try:
             info += self._exception.__class__.__name__
         except Exception:
@@ -386,8 +401,6 @@ class Greenlet(greenlet):
             self._start_event = None
             try:
                 result = self._run(*self.args, **self.kwargs)
-            except GreenletExit, ex:
-                result = ex
             except:
                 self._report_error(sys.exc_info())
                 return
@@ -473,7 +486,10 @@ class Greenlet(greenlet):
 
 
 def _kill(greenlet, exception, waiter):
-    greenlet.throw(exception)
+    try:
+        greenlet.throw(exception)
+    except:
+        traceback.print_exc()
     waiter.switch()
 
 
@@ -486,10 +502,14 @@ def joinall(greenlets, timeout=None, raise_error=False):
         try:
             for greenlet in greenlets:
                 greenlet.rawlink(put)
-            for _ in xrange(len(greenlets)):
-                greenlet = queue.get()
-                if raise_error and not greenlet.successful():
-                    getcurrent().throw(greenlet.exception)
+            if raise_error:
+                for _ in xrange(len(greenlets)):
+                    greenlet = queue.get()
+                    if not greenlet.successful():
+                        raise greenlet.exception
+            else:
+                for _ in xrange(len(greenlets)):
+                    queue.get()
         except:
             for greenlet in greenlets:
                 greenlet.unlink(put)
@@ -521,7 +541,7 @@ def _killall(greenlets, exception):
                 traceback.print_exc()
 
 
-def killall(greenlets, exception=GreenletExit, block=False, timeout=None):
+def killall(greenlets, exception=GreenletExit, block=True, timeout=None):
     if block:
         waiter = Waiter()
         core.active_event(_killall3, greenlets, exception, waiter)
@@ -591,5 +611,5 @@ def getfuncname(func):
     return repr(func)
 
 
-_NONE = Exception("Greenlet didn't even start")
+_NONE = Exception("Neither exception nor result")
 

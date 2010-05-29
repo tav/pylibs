@@ -6,7 +6,9 @@
 
 #include "sys/queue.h"
 
-#ifdef USE_LIBEVENT_2
+#include "event.h"
+
+#if defined(_EVENT_NUMERIC_VERSION) && _EVENT_NUMERIC_VERSION >= 0x2000000
 
 #include "event2/event.h"
 #include "event2/event_struct.h"
@@ -21,17 +23,21 @@
 
 #define EVBUFFER_DRAIN evbuffer_drain
 #define EVHTTP_SET_CB  evhttp_set_cb
+#define EVBUFFER_PULLUP(BUF, SIZE) evbuffer_pullup(BUF, SIZE)
 
-#elif USE_LIBEVENT_1
+#if _EVENT_NUMERIC_VERSION >= 0x02000500
+#define current_base event_global_current_base_
+#endif
 
-#include "event.h"
+#else
+
 #include "evhttp.h"
 #include "evdns.h"
 
 /* compatibility */
 
 #define evbuffer_get_length EVBUFFER_LENGTH
-#define evbuffer_pullup(BUF, SIZE) EVBUFFER_DATA(BUF)
+#define EVBUFFER_PULLUP(BUF, SIZE) EVBUFFER_DATA(BUF)
 
 #define TAILQ_FIRST(head) ((head)->tqh_first)
 #define	TAILQ_NEXT(elm, field) ((elm)->field.tqe_next)
@@ -39,10 +45,6 @@
 /* functions that return int in libeven2 but void in libevent1 */
 #define EVBUFFER_DRAIN(A, B) (evbuffer_drain((A), (B)), 0)
 #define EVHTTP_SET_CB(A, B, C, D) (evhttp_set_cb((A), (B), (C), (D)), 0)
-
-#else
-
-#error "Please define either USE_LIBEVENT_1 or USE_LIBEVENT_2"
 
 #endif
 
