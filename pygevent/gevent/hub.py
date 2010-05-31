@@ -66,8 +66,6 @@ def sleep(seconds=0):
     expressing a cooperative yield.
     """
     unique_mark = object()
-    if not seconds >= 0:
-        raise IOError(22, 'Invalid argument')
     timer = core.timer(seconds, getcurrent().switch, unique_mark)
     try:
         switch_result = get_hub().switch()
@@ -144,18 +142,13 @@ class Hub(greenlet):
     def switch(self):
         cur = getcurrent()
         assert cur is not self, 'Cannot switch to MAINLOOP from MAINLOOP'
-        exc_info = sys.exc_info()
-        try:
-            sys.exc_clear()
-            switch_out = getattr(cur, 'switch_out', None)
-            if switch_out is not None:
-                try:
-                    switch_out()
-                except:
-                    traceback.print_exc()
-            return greenlet.switch(self)
-        finally:
-            core.set_exc_info(*exc_info)
+        switch_out = getattr(cur, 'switch_out', None)
+        if switch_out is not None:
+            try:
+                switch_out()
+            except:
+                traceback.print_exc()
+        return greenlet.switch(self)
 
     def run(self):
         global _threadlocal
@@ -236,7 +229,7 @@ class Waiter(object):
     .. warning::
 
         This a limited and dangerous way to communicate between greenlets. It can easily
-        leave a greenlet unscheduled forever if used incorrectly. Consider using safer
+        left a greenlet unscheduled forever if used incorrectly. Consider using safer
         :class:`Event`/:class:`AsyncResult`/:class:`Queue` classes.
     """
 

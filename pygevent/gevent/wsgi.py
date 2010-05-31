@@ -7,18 +7,30 @@ socket = __import__('socket')
 
 import gevent
 from gevent.http import HTTPServer
-from gevent.hub import GreenletExit
 
 
 __all__ = ['WSGIServer',
            'WSGIHandler']
 
 
+class buffer_proxy(object):
+
+    def __init__(self, obj):
+        self._obj = obj
+
+    def __getattr__(self, item):
+        assert item != '_obj'
+        return getattr(self._obj, item)
+
+    def __iter__(self):
+        while len(self._obj):
+            yield self._obj.readline()
+
+
 class WSGIHandler(object):
 
-    def __init__(self, request, server):
+    def __init__(self, request):
         self.request = request
-        self.server = server
         self.code = None
         self.reason = None
         self.headers = None
@@ -38,7 +50,7 @@ class WSGIHandler(object):
         self.data.append(data)
 
     def end(self, env):
-        assert self.headers is not None, 'Application did not call start_response()'
+        assert self.headers is not None, 'Application did not call start_response'
         has_content_length = False
         for header, value in self.headers:
             self.request.add_output_header(header, str(value))
@@ -60,7 +72,10 @@ class WSGIHandler(object):
         if SERVER_SOFTWARE and not self.request.find_output_header('Server'):
             self.request.add_output_header('Server', SERVER_SOFTWARE)
 
-        self.request.send_reply(self.code, self.reason, data)
+        self.send_reply(self.code, self.reason, data)
+
+    def send_reply(self, code, reason, data):
+        self.request.send_reply(code, reason, data)
         self.log_request(len(data))
 
     def format_request(self, length='-'):
@@ -74,13 +89,10 @@ class WSGIHandler(object):
         return '%s - - [%s] "%s %s HTTP/%s.%s" %s %s "%s" "%s"' % args
 
     def log_request(self, *args):
-        log = self.server.log
-        if log is not None:
-            log.write(self.format_request(*args) + '\n')
+        print self.format_request(*args)
 
-    def prepare_env(self):
-        req = self.request
-        env = self.server.get_environ()
+    def prepare_env(self, req, server):
+        env = server.base_env.copy()
         if '?' in req.uri:
             path, query = req.uri.split('?', 1)
         else:
@@ -92,7 +104,7 @@ class WSGIHandler(object):
                     'SERVER_PROTOCOL': 'HTTP/%d.%d' % req.version,
                     'REMOTE_ADDR': req.remote_host,
                     'REMOTE_PORT': str(req.remote_port),
-                    'wsgi.input': req.input_buffer})
+                    'wsgi.input': buffer_proxy(req.input_buffer)})
         for header, value in req.get_input_headers():
             header = header.replace('-', '_').upper()
             if header not in ('CONTENT_LENGTH', 'CONTENT_TYPE'):
@@ -100,89 +112,75 @@ class WSGIHandler(object):
             env[header] = value
         return env
 
-    def handle(self):
-        env = self.prepare_env()
+    def handle(self, server):
+        req = self.request
+        env = self.prepare_env(req, server)
         try:
             try:
-                result = self.server.application(env, self.start_response)
+                result = server.application(env, self.start_response)
                 try:
                     self.data.extend(result)
                 finally:
                     if hasattr(result, 'close'):
                         result.close()
-            except GreenletExit:
-                raise
             except:
                 traceback.print_exc()
                 try:
-                    sys.stderr.write('%s: Failed to handle request:\n  request = %s\n  application = %s\n\n' %
-                                     (self.server, self.request, self.server.application))
-                except Exception:
-                    pass
-                # do not call self.end so that core.http replies with 500
-                self = None 
+                    sys.stderr.write('Failed to handle request:\n  request = %s\n  application = %s\n\n' % (req, server.application))
+                except:
+                    traceback.print_exc()
+                server.reply_error(self.request)
+                self = None
                 return
         finally:
-            sys.exc_clear()
-            if self is not None and self.code is not None:
+            if self is not None:
                 self.end(env)
 
 
 class WSGIServer(HTTPServer):
-    """A fast WSGI server based on :class:`HTTPServer`."""
 
     handler_class = WSGIHandler
+
     base_env = {'GATEWAY_INTERFACE': 'CGI/1.1',
                 'SERVER_SOFTWARE': 'gevent/%d.%d Python/%d.%d' % (gevent.version_info[:2] + sys.version_info[:2]),
                 'SCRIPT_NAME': '',
                 'wsgi.version': (1, 0),
                 'wsgi.url_scheme': 'http',
+                'wsgi.errors': sys.stderr,
                 'wsgi.multithread': False,
                 'wsgi.multiprocess': False,
                 'wsgi.run_once': False}
-    # If 'wsgi.errors' is not present in base_env, it will be set to sys.stderr
 
-    def __init__(self, listener, application=None, backlog=None, spawn='default', log=None, handler_class=None, environ=None):
-        HTTPServer.__init__(self, listener, backlog=backlog, spawn=spawn)
-        if application is not None:
-            self.application = application
+    def __init__(self, socket_or_address, application, **kwargs):
+        handler_class = kwargs.pop('handler_class', None)
         if handler_class is not None:
             self.handler_class = handler_class
-        if log is None:
-            self.log = sys.stderr
-        else:
-            self.log = log
-        self.set_environ(environ)
+        HTTPServer.__init__(self, **kwargs)
+        self.address = socket_or_address
+        self.application = application
 
-    def set_environ(self, environ=None):
-        if environ is not None:
-            self.environ = environ
-        environ_update = getattr(self, 'environ', None)
-        self.environ = self.base_env.copy()
-        if environ_update is not None:
-            self.environ.update(environ_update)
-        if self.environ.get('wsgi.errors') is None:
-            self.environ['wsgi.errors'] = sys.stderr
+    @property
+    def server_host(self):
+        return self.address[0]
 
-    def get_environ(self):
-        return self.environ.copy()
+    @property
+    def server_port(self):
+        return self.address[1]
 
-    def pre_start(self):
-        HTTPServer.pre_start(self)
-        if 'SERVER_NAME' not in self.environ:
-            self.environ['SERVER_NAME'] = socket.getfqdn(self.server_host)
-        self.environ.setdefault('SERVER_PORT', str(self.server_port))
-
-    def kill(self):
-        super(WSGIServer, self).kill()
-        self.__dict__.pop('application', None)
-        self.__dict__.pop('log', None)
-        self.__dict__.pop('environ', None)
-        self.__dict__.pop('handler_class', None)
+    def start(self):
+        if self.listeners:
+            raise AssertionError('WSGIServer.start() cannot be called more than once')
+        sock = HTTPServer.start(self, self.address, backlog=self.backlog)
+        self.address = sock.getsockname()
+        env = self.base_env.copy()
+        env.update( {'SERVER_NAME': socket.getfqdn(self.server_host),
+                     'SERVER_PORT': str(self.server_port) } )
+        self.base_env = env
+        return sock
 
     def handle(self, req):
-        handler = self.handler_class(req, self)
-        handler.handle()
+        handler = self.handler_class(req)
+        handler.handle(self)
 
 
 def extract_application(filename):

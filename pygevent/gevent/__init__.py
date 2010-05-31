@@ -2,12 +2,10 @@
 """
 gevent is a coroutine-based Python networking library that uses greenlet
 to provide a high-level synchronous API on top of libevent event loop.
-
-See http://www.gevent.org/ for the documentation.
 """
 
-version_info = (0, 13, 0)
-__version__ = '0.13.0dev'
+version_info = (0, 12, 2)
+__version__ = '0.12.2'
 
 __all__ = ['Greenlet',
            'GreenletExit',
@@ -30,13 +28,6 @@ __all__ = ['Greenlet',
            'core',
            'reinit']
 
-
-from gevent import core
-core.EV_TIMEOUT = 0x01
-core.EV_READ    = 0x02
-core.EV_WRITE   = 0x04
-core.EV_SIGNAL  = 0x08
-core.EV_PERSIST = 0x10
 
 from gevent.core import reinit
 from gevent.greenlet import Greenlet, joinall, killall

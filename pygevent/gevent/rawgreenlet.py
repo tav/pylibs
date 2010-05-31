@@ -6,9 +6,6 @@
 # XXX this module does seem to be useful and may be removed in the future
 """
 
-import warnings
-warnings.warn("gevent.rawgreenlet is deprecated", DeprecationWarning, stacklevel=2)
-
 import traceback
 from gevent import core
 from gevent.hub import GreenletExit, Waiter, sleep
@@ -28,7 +25,7 @@ def _kill(greenlet, exception, waiter):
     waiter.switch()
 
 
-def kill(greenlet, exception=GreenletExit, block=True, polling_period=0.2):
+def kill(greenlet, exception=GreenletExit, block=False, polling_period=0.2):
     """Kill greenlet with exception (GreenletExit by default).
     Wait for it to die if block is true.
     """
@@ -53,7 +50,7 @@ def _killall(greenlets, exception, waiter):
     waiter.switch(diehards)
 
 
-def killall(greenlets, exception=GreenletExit, block=True, polling_period=0.2):
+def killall(greenlets, exception=GreenletExit, block=False, polling_period=0.2):
     """Kill all the greenlets with exception (GreenletExit by default).
     Wait for them to die if block is true.
     """

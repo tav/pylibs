@@ -43,7 +43,6 @@ __all__ = ['event', 'read_event', 'write_event', 'timer', 'signal', 'active_even
 import sys
 import traceback
 from pprint import pformat
-import weakref
 
 DEF EVENT_INTERNAL_AVAILABLE = False
 
@@ -60,14 +59,6 @@ cdef extern from "Python.h":
     object PyString_FromStringAndSize(char *v, int len)
     object PyString_FromString(char *v)
     int    PyObject_AsCharBuffer(object obj, char **buffer, int *buffer_len)
-
-cdef extern from "frameobject.h":
-    ctypedef struct PyThreadState:
-        void* exc_type
-        void* exc_value
-        void* exc_traceback
-
-    PyThreadState* PyThreadState_GET()
 
 ctypedef void (*event_handler)(int fd, short evtype, void *arg)
 
@@ -102,12 +93,6 @@ cdef extern from "libevent.h":
     int EVLOOP_NONBLOCK
     char* _EVENT_VERSION
 
-    int EV_TIMEOUT
-    int EV_READ
-    int EV_WRITE
-    int EV_SIGNAL
-    int EV_PERSIST
-
 cdef extern from "string.h":
     char* strerror(int errnum)
 
@@ -138,17 +123,23 @@ cdef extern from "libevent.h":
     event_base* current_base
 
 
+EV_TIMEOUT = 0x01
+EV_READ    = 0x02
+EV_WRITE   = 0x04
+EV_SIGNAL  = 0x08
+EV_PERSIST = 0x10
+
 cdef void __event_handler(int fd, short evtype, void *arg) with gil:
     cdef event ev = <event>arg
     try:
+        assert ev.fd == fd, (ev.fd, fd)
         ev._callback(ev, evtype)
     except:
         traceback.print_exc()
         try:
             sys.stderr.write('Failed to execute callback for %s\n\n' % (ev, ))
         except:
-            traceback.print_exc()
-        sys.exc_clear()
+            pass
     finally:
         if not event_pending(&ev.ev, EV_READ|EV_WRITE|EV_SIGNAL|EV_TIMEOUT, NULL):
             Py_DECREF(ev)
@@ -297,33 +288,24 @@ cdef class event:
 cdef class read_event(event):
     """Create a new scheduled event with evtype=EV_READ"""
 
-    def __init__(self, int handle, callback, timeout=-1, arg=None, persist=False):
-        cdef short evtype = EV_READ
-        if persist:
-            evtype = evtype | EV_PERSIST
-        event.__init__(self, evtype, handle, callback, arg)
+    def __init__(self, int handle, callback, timeout=-1, arg=None):
+        event.__init__(self, EV_READ, handle, callback, arg)
         self.add(timeout)
 
 
 cdef class write_event(event):
     """Create a new scheduled event with evtype=EV_WRITE"""
 
-    def __init__(self, int handle, callback, timeout=-1, arg=None, persist=False):
-        cdef short evtype = EV_WRITE
-        if persist:
-            evtype = evtype | EV_PERSIST
-        event.__init__(self, evtype, handle, callback, arg)
+    def __init__(self, int handle, callback, timeout=-1, arg=None):
+        event.__init__(self, EV_WRITE, handle, callback, arg)
         self.add(timeout)
 
 
 class readwrite_event(event):
     """Create a new scheduled event with evtype=EV_READ|EV_WRITE"""
 
-    def __init__(self, int handle, callback, timeout=-1, arg=None, persist=False):
-        cdef short evtype = EV_READ|EV_WRITE
-        if persist:
-            evtype = evtype | EV_PERSIST
-        event.__init__(self, evtype, handle, callback, arg)
+    def __init__(self, int handle, callback, timeout=-1, arg=None):
+        event.__init__(self, EV_READ|EV_WRITE, handle, callback, arg)
         self.add(timeout)
 
 
@@ -337,8 +319,7 @@ cdef void __simple_handler(int fd, short evtype, void *arg) with gil:
         try:
             sys.stderr.write('Failed to execute callback for %s\n\n' % (ev, ))
         except:
-            traceback.print_exc()
-        sys.exc_clear()
+            pass
     finally:
         if not event_pending(&ev.ev, EV_READ|EV_WRITE|EV_SIGNAL|EV_TIMEOUT, NULL):
             Py_DECREF(ev)
@@ -459,19 +440,3 @@ if get_version() != get_header_version() and get_header_version() is not None:
 
 include "evbuffer.pxi"
 include "evhttp.pxi"
-
-def set_exc_info(object typ, object value, object tb):
-    cdef PyThreadState* tstate = PyThreadState_GET()
-    if tstate.exc_type != NULL:
-        Py_DECREF(<object>tstate.exc_type)
-    if tstate.exc_value != NULL:
-        Py_DECREF(<object>tstate.exc_value)
-    if tstate.exc_traceback != NULL:
-        Py_DECREF(<object>tstate.exc_traceback)
-    Py_INCREF(typ)
-    Py_INCREF(value)
-    Py_INCREF(tb)
-    tstate.exc_type = <void*>typ
-    tstate.exc_value = <void *>value
-    tstate.exc_traceback = <void *>tb
-
