@@ -206,9 +206,11 @@ class IOLoop(object):
 
             if self._timeouts:
                 now = time.time()
-                while self._timeouts and self._timeouts[0].deadline <= now:
-                    timeout = self._timeouts.pop(0)
+                timeouts = self._timeouts
+                while timeouts and timeouts[0].deadline <= now:
+                    timeout = timeouts.pop(0)
                     self._run_callback(timeout.callback)
+                self._timeouts = timeouts
                 if self._timeouts:
                     milliseconds = self._timeouts[0].deadline - now
                     poll_timeout = min(milliseconds, poll_timeout)
