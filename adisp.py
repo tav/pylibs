@@ -1,5 +1,8 @@
 # -*- coding:utf-8 -*-
 
+# Changes to this file by The Ampify Authors are according to the
+# Public Domain license that can be found in the root LICENSE file.
+
 # Wicked library found at:
 # http://bazaar.launchpad.net/~isagalaev/adisp/trunk/annotate/head:/adisp.py
 
@@ -91,7 +94,8 @@ get all their result for processing at once:
 
 After *all* the asynchronous calls will complete `responses` will be a list of
 responses corresponding to given urls.
-'''
+''' # emacs '
+
 from functools import partial
 
 class CallbackDispatcher(object):
@@ -128,15 +132,83 @@ class CallbackDispatcher(object):
             return
         self._send_result(results, single)
 
-def process(func):
+class CombinedCallbackErrbackDispatcher(object):
+    def __init__(self, generator):
+        self.g = generator
+        try:
+            self.call(self.g.next())
+        except StopIteration:
+            pass
+
+    def _send_result(self, results, single):
+        try:
+            result = results[0] if single else results
+            self.call(self.g.send(result))
+        except StopIteration:
+            pass
+
+    def _send_error(self, results, single):
+        try:
+            result = results[0] if single else results
+            self.call(self.g.throw(result))
+        except StopIteration:
+            pass
+
+    def call(self, callers):
+        single = not hasattr(callers, '__iter__')
+        if single:
+            callers = [callers]
+        self.call_count = len(list(callers))
+        results = [None] * self.call_count
+        if self.call_count == 0:
+            self._send_result(results, single)
+        else:
+            for count, caller in enumerate(callers):
+                caller(
+                    callback=partial(self.callback, results, count, single),
+                    errback=partial(self.errback, results, count, single)
+                    )
+
+    def callback(self, results, index, single, arg):
+        self.call_count -= 1
+        results[index] = arg
+        if self.call_count > 0:
+            return
+        self._send_result(results, single)
+
+    def errback(self, results, index, single, arg):
+        self.call_count -= 1
+        results[index] = arg
+        if self.call_count > 0:
+            return
+        self._send_error(results, single)
+
+def cb_process(func):
     def wrapper(*args, **kwargs):
         CallbackDispatcher(func(*args, **kwargs))
     return wrapper
 
-def async(func, cbname='callback', cbwrapper=lambda x: x):
+def process(func):
     def wrapper(*args, **kwargs):
-        def caller(callback):
-            kwargs[cbname] = cbwrapper(callback)
-            return func(*args, **kwargs)
-        return caller
+        CombinedCallbackErrbackDispatcher(func(*args, **kwargs))
+    return wrapper
+
+def async(func, cbname='callback', ebname='errback', cbwrapper=None):
+    if cbwrapper:
+        def wrapper(*args, **kwargs):
+            def caller(callback, errback=None):
+                kwargs[cbname] = cbwrapper(callback)
+                if errback:
+                    kwargs[ebname] = errback
+                return func(*args, **kwargs)
+            return caller
+    else:
+        def wrapper(*args, **kwargs):
+            def caller(callback, errback=None):
+                kwargs[cbname] = callback
+                if errback:
+                    kwargs[ebname] = errback
+                return func(*args, **kwargs)
+            return caller
+    wrapper.__raw__ = func
     return wrapper
