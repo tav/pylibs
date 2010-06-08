@@ -33,17 +33,18 @@ setup(
 pylibs_path = dirname(realpath(__file__))
 ssl_path = join_path(pylibs_path, 'pyssl')
 
-for path in [ssl_path]:
-    run_command(
-        [sys.executable, join_path(path, 'setup.py'), 'build_ext', '-i'],
-        exit_on_error=True, cwd=join_path(path), redirect_stdout=False,
-        redirect_stderr=False
-        )
+if sys.version_info < (2, 6):
+    for path in [ssl_path]:
+        run_command(
+            [sys.executable, join_path(path, 'setup.py'), 'build_ext', '-i'],
+            exit_on_error=True, cwd=join_path(path), redirect_stdout=False,
+            redirect_stderr=False
+            )
 
-gevent_path = join_path(pylibs_path, 'pygevent')
-ampify_root = dirname(dirname(pylibs_path))
-ampify_include = join_path(ampify_root, 'environ', 'local', 'include')
-ampify_lib = join_path(ampify_root, 'environ', 'local', 'lib')
+# gevent_path = join_path(pylibs_path, 'pygevent')
+# ampify_root = dirname(dirname(pylibs_path))
+# ampify_include = join_path(ampify_root, 'environ', 'local', 'include')
+# ampify_lib = join_path(ampify_root, 'environ', 'local', 'lib')
 
 # run_command(
 #     [sys.executable, join_path(gevent_path, 'setup.py'), 'build_ext', '-i',
