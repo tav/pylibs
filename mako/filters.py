@@ -1,5 +1,5 @@
 # filters.py
-# Copyright (C) 2006, 2007, 2008, 2009 Geoffrey T. Dairiki <dairiki@dairiki.org> and Michael Bayer <mike_mp@zzzcomputing.com>
+# Copyright (C) 2006, 2007, 2008, 2009, 2010 Geoffrey T. Dairiki <dairiki@dairiki.org> and Michael Bayer <mike_mp@zzzcomputing.com>
 #
 # This module is part of Mako and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -7,6 +7,7 @@
 
 import re, cgi, urllib, htmlentitydefs, codecs
 from StringIO import StringIO
+from mako import util
 
 xml_escapes = {
     '&' : '&amp;',
@@ -166,5 +167,9 @@ DEFAULT_ESCAPES = {
     'str':'str',
     'n':'n'
 }
-    
+
+if util.py3k:
+    DEFAULT_ESCAPES.update({
+        'unicode':'str'
+    })
 

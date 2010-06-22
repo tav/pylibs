@@ -1,22 +1,26 @@
 # util.py
-# Copyright (C) 2006, 2007, 2008, 2009 Michael Bayer mike_mp@zzzcomputing.com
+# Copyright (C) 2006, 2007, 2008, 2009, 2010 Michael Bayer mike_mp@zzzcomputing.com
 #
 # This module is part of Mako and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
 
 import sys
-try:
-    Set = set
-except:
-    import sets
-    Set = sets.Set
 
-try:
-    from cStringIO import StringIO
-except:
-    from StringIO import StringIO
 
-import codecs, re, weakref, os, time
+py3k = getattr(sys, 'py3kwarning', False) or sys.version_info >= (3, 0)
+py24 = sys.version_info >= (2, 4) and sys.version_info < (2, 5)
+jython = sys.platform.startswith('java')
+win32 = sys.platform.startswith('win')
+
+if py3k:
+    from io import StringIO
+else:
+    try:
+        from cStringIO import StringIO
+    except:
+        from StringIO import StringIO
+
+import codecs, re, weakref, os, time, operator
 
 try:
     import threading
@@ -25,11 +29,31 @@ except ImportError:
     import dummy_threading as threading
     import dummy_thread as thread
 
-if sys.platform.startswith('win') or sys.platform.startswith('java'):
+if win32 or jython:
     time_func = time.clock
 else:
     time_func = time.time 
    
+def function_named(fn, name):
+    """Return a function with a given __name__.
+
+    Will assign to __name__ and return the original function if possible on
+    the Python implementation, otherwise a new function will be constructed.
+
+    """
+    fn.__name__ = name
+    return fn
+ 
+if py24:
+    def exception_name(exc):
+        try:
+            return exc.__class__.__name__
+        except AttributeError:
+            return exc.__name__
+else:
+    def exception_name(exc):
+        return exc.__class__.__name__
+    
 def verify_directory(dir):
     """create and/or verify a filesystem directory."""
     
@@ -43,6 +67,18 @@ def verify_directory(dir):
             if tries > 5:
                 raise
 
+def to_list(x, default=None):
+    if x is None:
+        return default
+    if not isinstance(x, (list, tuple)):
+        return [x]
+    else:
+        return x
+
+
+    
+
+
 class SetLikeDict(dict):
     """a dictionary that has some setlike methods on it"""
     def union(self, other):
@@ -54,7 +90,8 @@ class SetLikeDict(dict):
         return x
 
 class FastEncodingBuffer(object):
-    """a very rudimentary buffer that is faster than StringIO, but doesnt crash on unicode data like cStringIO."""
+    """a very rudimentary buffer that is faster than StringIO, 
+    but doesnt crash on unicode data like cStringIO."""
     
     def __init__(self, encoding=None, errors='strict', unicode=False):
         self.data = []
@@ -66,6 +103,9 @@ class FastEncodingBuffer(object):
         self.unicode = unicode
         self.errors = errors
         self.write = self.data.append
+    
+    def truncate(self):
+        self.data =[]
         
     def getvalue(self):
         if self.encoding:
@@ -120,8 +160,8 @@ class LRUCache(dict):
     
     def _manage_size(self):
         while len(self) > self.capacity + self.capacity * self.threshold:
-            bytime = dict.values(self)
-            bytime.sort(lambda a, b: cmp(b.timestamp, a.timestamp))
+            bytime = sorted(dict.values(self), 
+                            key=operator.attrgetter('timestamp'), reverse=True)
             for item in bytime[self.capacity:]:
                 try:
                     del self[item.key]
@@ -136,13 +176,13 @@ _PYTHON_MAGIC_COMMENT_re = re.compile(
     re.VERBOSE)
 
 def parse_encoding(fp):
-    """Deduce the encoding of a source file from magic comment.
+    """Deduce the encoding of a Python source file (binary mode) from magic comment.
 
     It does this in the same way as the `Python interpreter`__
 
     .. __: http://docs.python.org/ref/encodings.html
 
-    The ``fp`` argument should be a seekable file object.
+    The ``fp`` argument should be a seekable file object in binary mode.
     """
     pos = fp.tell()
     fp.seek(0)
@@ -152,11 +192,11 @@ def parse_encoding(fp):
         if has_bom:
             line1 = line1[len(codecs.BOM_UTF8):]
 
-        m = _PYTHON_MAGIC_COMMENT_re.match(line1)
+        m = _PYTHON_MAGIC_COMMENT_re.match(line1.decode('ascii', 'ignore'))
         if not m:
             try:
                 import parser
-                parser.suite(line1)
+                parser.suite(line1.decode('ascii', 'ignore'))
             except (ImportError, SyntaxError):
                 # Either it's a real syntax error, in which case the source
                 # is not valid python source, or line2 is a continuation of
@@ -165,7 +205,7 @@ def parse_encoding(fp):
                 pass
             else:
                 line2 = fp.readline()
-                m = _PYTHON_MAGIC_COMMENT_re.match(line2)
+                m = _PYTHON_MAGIC_COMMENT_re.match(line2.decode('ascii', 'ignore'))
 
         if has_bom:
             if m:

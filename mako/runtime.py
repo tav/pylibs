@@ -1,5 +1,5 @@
 # runtime.py
-# Copyright (C) 2006, 2007, 2008, 2009 Michael Bayer mike_mp@zzzcomputing.com
+# Copyright (C) 2006, 2007, 2008, 2009, 2010 Michael Bayer mike_mp@zzzcomputing.com
 #
 # This module is part of Mako and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -18,6 +18,7 @@ class Context(object):
         self._data.update(data)
         self._kwargs = data.copy()
         self._with_template = None
+        self._outputting_as_unicode = None
         self.namespaces = {}
         
         # "capture" function which proxies to the generic "capture" function
@@ -26,8 +27,13 @@ class Context(object):
         # "caller" stack used by def calls with content
         self.caller_stack = self._data['caller'] = CallerStack()
         
-    lookup = property(lambda self:self._with_template.lookup)
-    kwargs = property(lambda self:self._kwargs.copy())
+    @property
+    def lookup(self):
+        return self._with_template.lookup
+        
+    @property
+    def kwargs(self):
+        return self._kwargs.copy()
     
     def push_caller(self, caller):
         self.caller_stack.append(caller)
@@ -87,6 +93,7 @@ class Context(object):
         c._orig = self._orig
         c._kwargs = self._kwargs
         c._with_template = self._with_template
+        c._outputting_as_unicode = self._outputting_as_unicode
         c.namespaces = self.namespaces
         c.caller_stack = self.caller_stack
         return c
@@ -144,8 +151,13 @@ class _NSAttr(object):
         raise AttributeError(key)    
     
 class Namespace(object):
-    """provides access to collections of rendering methods, which can be local, from other templates, or from imported modules"""
-    def __init__(self, name, context, module=None, template=None, templateuri=None, callables=None, inherits=None, populate_self=True, calling_uri=None):
+    """provides access to collections of rendering methods, which 
+      can be local, from other templates, or from imported modules"""
+    
+    def __init__(self, name, context, module=None, 
+                            template=None, templateuri=None, 
+                            callables=None, inherits=None, 
+                            populate_self=True, calling_uri=None):
         self.name = name
         if module is not None:
             mod = __import__(module)
@@ -169,16 +181,27 @@ class Namespace(object):
             self.callables = None
         if populate_self and self.template is not None:
             (lclcallable, lclcontext) = _populate_self_namespace(context, self.template, self_ns=self)
-        
-    module = property(lambda s:s._module or s.template.module)
-    filename = property(lambda s:s._module and s._module.__file__ or s.template.filename)
-    uri = property(lambda s:s.template.uri)
     
+    @property
+    def module(self):
+        return self._module or self.template.module
+    
+    @property
+    def filename(self):
+        if self._module:
+            return self._module.__file__
+        else:
+            return self.template.filename
+    
+    @property
+    def uri(self):
+        return self.template.uri
+
+    @property
     def attr(self):
         if not hasattr(self, '_attr'):
             self._attr = _NSAttr(self)
         return self._attr
-    attr = property(attr)
 
     def get_namespace(self, uri):
         """return a namespace corresponding to the given template uri.
@@ -212,9 +235,9 @@ class Namespace(object):
                 kwargs.setdefault('url', self.template.cache_url)
         return self.cache.get(key, **kwargs)
     
+    @property
     def cache(self):
         return self.template.cache
-    cache = property(cache)
     
     def include_file(self, uri, **kwargs):
         """include a file at the given uri"""
@@ -264,6 +287,7 @@ class Namespace(object):
 
 def supports_caller(func):
     """apply a caller_stack compatibility decorator to a plain Python function."""
+    
     def wrap_stackframe(context,  *args, **kwargs):
         context.caller_stack._push_frame()
         try:
@@ -274,8 +298,12 @@ def supports_caller(func):
         
 def capture(context, callable_, *args, **kwargs):
     """execute the given template def, capturing the output into a buffer."""
+    
     if not callable(callable_):
-        raise exceptions.RuntimeException("capture() function expects a callable as its argument (i.e. capture(func, *args, **kwargs))")
+        raise exceptions.RuntimeException(
+                                "capture() function expects a callable as "
+                                "its argument (i.e. capture(func, *args, **kwargs))"
+                            )
     context._push_buffer()
     try:
         callable_(*args, **kwargs)
@@ -307,9 +335,10 @@ def _decorate_inline(context, fn):
             
 def _include_file(context, uri, calling_uri, **kwargs):
     """locate the template from the given uri and include it in the current output."""
+    
     template = _lookup_template(context, uri, calling_uri)
     (callable_, ctx) = _populate_self_namespace(context._clean_inheritance_tokens(), template)
-    callable_(ctx, **_kwargs_for_callable(callable_, context._orig, **kwargs))
+    callable_(ctx, **_kwargs_for_include(callable_, context._orig, **kwargs))
         
 def _inherit_from(context, uri, calling_uri):
     """called by the _inherit method in template modules to set up the inheritance chain at the start
@@ -361,15 +390,34 @@ def _render(template, callable_, args, data, as_unicode=False):
     if as_unicode:
         buf = util.FastEncodingBuffer(unicode=True)
     elif template.output_encoding:
-        buf = util.FastEncodingBuffer(unicode=as_unicode, encoding=template.output_encoding, errors=template.encoding_errors)
+        buf = util.FastEncodingBuffer(
+                        unicode=as_unicode, 
+                        encoding=template.output_encoding, 
+                        errors=template.encoding_errors)
     else:
         buf = util.StringIO()
     context = Context(buf, **data)
+    context._outputting_as_unicode = as_unicode
     context._with_template = template
+    
     _render_context(template, callable_, context, *args, **_kwargs_for_callable(callable_, data))
     return context._pop_buffer().getvalue()
 
-def _kwargs_for_callable(callable_, data, **kwargs):
+def _kwargs_for_callable(callable_, data):
+    argspec = inspect.getargspec(callable_)
+    # for normal pages, **pageargs is usually present
+    if argspec[2]:
+        return data
+    
+    # for rendering defs from the top level, figure out the args
+    namedargs = argspec[0] + [v for v in argspec[1:3] if v is not None]
+    kwargs = {}
+    for arg in namedargs:
+        if arg != 'context' and arg in data and arg not in kwargs:
+            kwargs[arg] = data[arg]
+    return kwargs
+
+def _kwargs_for_include(callable_, data, **kwargs):
     argspec = inspect.getargspec(callable_)
     namedargs = argspec[0] + [v for v in argspec[1:3] if v is not None]
     for arg in namedargs:
@@ -401,19 +449,27 @@ def _exec_template(callable_, context, args=None, kwargs=None):
         try:
             callable_(context, *args, **kwargs)
         except Exception, e:
-            error = e
+            _render_error(template, context, e)
         except:                
             e = sys.exc_info()[0]
-            error = e
-        if error:
-            if template.error_handler:
-                result = template.error_handler(context, error)
-                if not result:
-                    raise error
-            else:
-                error_template = exceptions.html_error_template()
-                context._buffer_stack[:] = [util.FastEncodingBuffer(error_template.output_encoding, error_template.encoding_errors)]
-                context._with_template = error_template
-                error_template.render_context(context, error=error)
+            _render_error(template, context, e)
     else:
         callable_(context, *args, **kwargs)
+
+
+def _render_error(template, context, error):
+    if template.error_handler:
+        result = template.error_handler(context, error)
+        if not result:
+            raise error
+    else:
+        error_template = exceptions.html_error_template()
+        if context._outputting_as_unicode:
+            context._buffer_stack[:] = [util.FastEncodingBuffer(unicode=True)]
+        else:
+            context._buffer_stack[:] = [util.FastEncodingBuffer(
+                                            error_template.output_encoding,
+                                            error_template.encoding_errors)]
+                                            
+        context._with_template = error_template
+        error_template.render_context(context, error=error)
