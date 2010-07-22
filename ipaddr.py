@@ -1,5 +1,6 @@
-#!/usr/bin/python
-#
+# Changes to this file by The Ampify Authors are according to the
+# Public Domain license that can be found in the root LICENSE file.
+
 # Copyright 2007 Google Inc.
 #  Licensed to PSF under a Contributor Agreement.
 #
@@ -1405,9 +1406,13 @@ class _BaseV6(object):
         best_doublecolon_len = 0
         doublecolon_start = -1
         doublecolon_len = 0
+        empty_field_found = 0
+
         for index in range(len(hextets)):
             if hextets[index] == '0':
                 doublecolon_len += 1
+                if not empty_field_found:
+                    empty_field_found = index
                 if doublecolon_start == -1:
                     # Start of a sequence of zeros.
                     doublecolon_start = index
@@ -1429,6 +1434,9 @@ class _BaseV6(object):
             # For zeros at the beginning of the address.
             if best_doublecolon_start == 0:
                 hextets = [''] + hextets
+        elif empty_field_found:
+            if empty_field_found not in (0, 7):
+                hextets[empty_field_found] = ''
 
         return hextets
 
@@ -1474,7 +1482,7 @@ class _BaseV6(object):
             if isinstance(self, _BaseNet):
                 ip_str = str(self.ip)
 
-        if self._is_shorthand_ip(ip_str):
+        if ip_str.count('::') == 1:
             new_ip = []
             hextet = ip_str.split('::')
             sep = len(hextet[0].split(':')) + len(hextet[1].split(':'))
