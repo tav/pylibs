@@ -10,12 +10,12 @@ import sys
 import time
 
 from os.path import isabs
-from signal import SIGTERM 
+from signal import SIGTERM
 
 class Daemon(object):
     """
     A generic daemon class.
-    
+
     Usage: subclass the Daemon class and override the run() method
     """
 
@@ -26,37 +26,37 @@ class Daemon(object):
         if not isabs(pidfile):
             raise RuntimeError("The pidfile path is not absolute: %s" % pidfile)
         self.pidfile = pidfile
-    
+
     def daemonize(self):
         """
-        do the UNIX double-fork magic, see Stevens' "Advanced 
+        do the UNIX double-fork magic, see Stevens' "Advanced
         Programming in the UNIX Environment" for details (ISBN 0201563177)
         http://www.erlenstar.demon.co.uk/unix/faq_2.html#SEC16
         """
-        try: 
-            pid = os.fork() 
+        try:
+            pid = os.fork()
             if pid > 0:
                 # exit first parent
-                sys.exit(0) 
-        except OSError, e: 
-            sys.stderr.write("fork #1 failed: %d (%s)\n" % (e.errno, e.strerror))
+                sys.exit(0)
+        except OSError, e:
+            sys.stderr.write("ERROR: fork #1 failed: %d (%s)\n" % (e.errno, e.strerror))
             sys.exit(1)
-    
+
         # decouple from parent environment
-        os.chdir("/") 
-        os.setsid() 
-        os.umask(0) 
-    
+        os.chdir("/")
+        os.setsid()
+        os.umask(0)
+
         # do second fork
-        try: 
-            pid = os.fork() 
+        try:
+            pid = os.fork()
             if pid > 0:
                 # exit from second parent
-                sys.exit(0) 
-        except OSError, e: 
-            sys.stderr.write("fork #2 failed: %d (%s)\n" % (e.errno, e.strerror))
-            sys.exit(1) 
-    
+                sys.exit(0)
+        except OSError, e:
+            sys.stderr.write("ERROR: fork #2 failed: %d (%s)\n" % (e.errno, e.strerror))
+            sys.exit(1)
+
         # redirect standard file descriptors
         sys.stdout.flush()
         sys.stderr.flush()
@@ -66,12 +66,12 @@ class Daemon(object):
         os.dup2(si.fileno(), sys.stdin.fileno())
         os.dup2(so.fileno(), sys.stdout.fileno())
         os.dup2(se.fileno(), sys.stderr.fileno())
-    
+
         # write pidfile
         atexit.register(self.exithook)
         pid = str(os.getpid())
         file(self.pidfile,'w+').write("%s\n" % pid)
-    
+
     def delpid(self):
         os.remove(self.pidfile)
 
@@ -86,7 +86,7 @@ class Daemon(object):
             pf.close()
         except IOError:
             pid = None
-    
+
         if pid:
             message = (
                 "ERROR: PID file %s already exists.\n"
@@ -94,7 +94,7 @@ class Daemon(object):
                 )
             sys.stderr.write(message % self.pidfile)
             sys.exit(1)
-        
+
         # Start the daemon
         self.daemonize()
         self.run()
@@ -110,7 +110,7 @@ class Daemon(object):
             pf.close()
         except IOError:
             pid = None
-    
+
         if not pid:
             message = (
                 "ERROR: PID file %s does not exist.\n"
@@ -119,7 +119,7 @@ class Daemon(object):
             sys.stderr.write(message % self.pidfile)
             return # not an error in a restart
 
-        # Try killing the daemon process    
+        # Try killing the daemon process
         try:
             while 1:
                 os.kill(pid, SIGTERM)
@@ -145,13 +145,6 @@ class Daemon(object):
         You should override this method when you subclass Daemon. It will be
         called after the process has been daemonized by start() or restart().
         """
-        f = open('/Users/tav/silo/ampify/third_party/pylibs/foo.txt', 'wb')
-        from time import sleep
-        while 1:
-            f.write('hello')
-            f.flush()
-            sleep(0.5)
-        f.close()
 
     def exithook(self):
         """
