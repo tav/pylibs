@@ -117,7 +117,7 @@ class Daemon(object):
                 "ERROR: The daemon might be not running yet.\n"
                 )
             sys.stderr.write(message % self.pidfile)
-            return # not an error in a restart
+            sys.exit(1)
 
         # Try killing the daemon process
         try:
