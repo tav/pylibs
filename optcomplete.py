@@ -443,3 +443,34 @@ class CmdComplete:
         if hasattr(self, 'completer'):
             completer = self.completer
         return autocomplete(parser, completer)
+
+# ------------------------------------------------------------------------------
+# Support Functions
+# ------------------------------------------------------------------------------
+
+class CompletionResult(Exception):
+    def __init__(self, result):
+        self.result = result
+
+def parse_options(parser, argv, completer=None, exit_if_no_args=False):
+    if completer:
+        raise CompletionResult(parser)
+    if (argv == ['--help']) or (argv == ['-h']):
+        parser.print_help()
+        sys.exit(1)
+    options, args = parser.parse_args(argv)
+    if exit_if_no_args and not args:
+        parser.print_help()
+        sys.exit(1)
+    return options, args
+
+def make_autocompleter(command):
+    def wrapper(completer):
+        try:
+            parser = command(completer=completer)
+        except CompletionResult:
+            parser = sys.exc_info()[1].result
+        if isinstance(parser, tuple):
+            parser, completer = parser
+        return autocomplete(parser, completer)
+    return wrapper
