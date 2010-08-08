@@ -112,12 +112,7 @@ class Daemon(object):
             pid = None
 
         if not pid:
-            message = (
-                "ERROR: PID file %s does not exist.\n"
-                "ERROR: The daemon might be not running yet.\n"
-                )
-            sys.stderr.write(message % self.pidfile)
-            sys.exit(1)
+            return
 
         # Try killing the daemon process
         try:
