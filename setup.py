@@ -41,16 +41,4 @@ if sys.version_info < (2, 6):
             redirect_stderr=False
             )
 
-# gevent_path = join_path(pylibs_path, 'pygevent')
-# ampify_root = dirname(dirname(pylibs_path))
-# ampify_include = join_path(ampify_root, 'environ', 'local', 'include')
-# ampify_lib = join_path(ampify_root, 'environ', 'local', 'lib')
-
-# run_command(
-#     [sys.executable, join_path(gevent_path, 'setup.py'), 'build_ext', '-i',
-#      '-I%s' % ampify_include, '-L%s' % ampify_lib],
-#     exit_on_error=True, cwd=join_path(gevent_path), redirect_stdout=False,
-#     redirect_stderr=False
-#     )
-
 print "Python extension modules successfully compiled."
