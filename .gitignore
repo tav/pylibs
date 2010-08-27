@@ -1,7 +1,6 @@
 # specific files/directories
 
 build
-distupdates
 keyspace.py
 keyspace_client.py
 
