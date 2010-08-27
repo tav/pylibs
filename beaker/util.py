@@ -1,4 +1,5 @@
 """Beaker utilities"""
+
 try:
     import thread as _thread
     import threading as _threading
@@ -12,91 +13,19 @@ import string
 import types
 import weakref
 import warnings
+import sys
 
-try:
-    Set = set
-except NameError:
-    from sets import Set
-try:
-    from hashlib import sha1
-except ImportError:
-    from sha import sha as sha1
+py3k = getattr(sys, 'py3kwarning', False) or sys.version_info >= (3, 0)
+py24 = sys.version_info < (2,5)
+jython = sys.platform.startswith('java')
+
+if py3k or jython:
+    import pickle
+else:
+    import cPickle as pickle
 
 from beaker.converters import asbool
-
-try:
-    from base64 import b64encode, b64decode
-except ImportError:
-    import binascii
-
-    _translation = [chr(_x) for _x in range(256)]
-
-    # From Python 2.5 base64.py
-    def _translate(s, altchars):
-        translation = _translation[:]
-        for k, v in altchars.items():
-            translation[ord(k)] = v
-        return s.translate(''.join(translation))
-
-    def b64encode(s, altchars=None):
-        """Encode a string using Base64.
-
-        s is the string to encode.  Optional altchars must be a string of at least
-        length 2 (additional characters are ignored) which specifies an
-        alternative alphabet for the '+' and '/' characters.  This allows an
-        application to e.g. generate url or filesystem safe Base64 strings.
-
-        The encoded string is returned.
-        """
-        # Strip off the trailing newline
-        encoded = binascii.b2a_base64(s)[:-1]
-        if altchars is not None:
-            return _translate(encoded, {'+': altchars[0], '/': altchars[1]})
-        return encoded
-
-    def b64decode(s, altchars=None):
-        """Decode a Base64 encoded string.
-
-        s is the string to decode.  Optional altchars must be a string of at least
-        length 2 (additional characters are ignored) which specifies the
-        alternative alphabet used instead of the '+' and '/' characters.
-
-        The decoded string is returned.  A TypeError is raised if s were
-        incorrectly padded or if there are non-alphabet characters present in the
-        string.
-        """
-        if altchars is not None:
-            s = _translate(s, {altchars[0]: '+', altchars[1]: '/'})
-        try:
-            return binascii.a2b_base64(s)
-        except binascii.Error, msg:
-            # Transform this exception for consistency
-            raise TypeError(msg)
-
-try:
-    from threading import local as _tlocal
-except ImportError:
-    try:
-        from dummy_threading import local as _tlocal
-    except ImportError:
-        class _tlocal(object):
-            def __init__(self):
-                self.__dict__['_tdict'] = {}
-
-            def __delattr__(self, key):
-                try:
-                    del self._tdict[(thread.get_ident(), key)]
-                except KeyError:
-                    raise AttributeError(key)
-
-            def __getattr__(self, key):
-                try:
-                    return self._tdict[(thread.get_ident(), key)]
-                except KeyError:
-                    raise AttributeError(key)
-
-            def __setattr__(self, key, value):
-                self._tdict[(thread.get_ident(), key)] = value
+from threading import local as _tlocal
 
 
 __all__  = ["ThreadLocal", "Registry", "WeakValuedRegistry", "SyncDict",
@@ -117,17 +46,17 @@ def verify_directory(dir):
                 raise
 
     
-def deprecated(func, message):
-    def deprecated_method(*args, **kargs):
-        warnings.warn(message, DeprecationWarning, 2)
-        return func(*args, **kargs)
-    try:
-        deprecated_method.__name__ = func.__name__
-    except TypeError: # Python < 2.4
-        pass
-    deprecated_method.__doc__ = "%s\n\n%s" % (message, func.__doc__)
-    return deprecated_method
-
+def deprecated(message):
+    def wrapper(fn):
+        def deprecated_method(*args, **kargs):
+            warnings.warn(message, DeprecationWarning, 2)
+            return fn(*args, **kargs)
+        # TODO: use decorator ?  functools.wrapper ?
+        deprecated_method.__name__ = fn.__name__
+        deprecated_method.__doc__ = "%s\n\n%s" % (message, fn.__doc__)
+        return deprecated_method
+    return wrapper
+    
 class ThreadLocal(object):
     """stores a value on a per-thread basis"""
 
@@ -214,15 +143,23 @@ class WeakValuedRegistry(SyncDict):
         self.mutex = _threading.RLock()
         self.dict = weakref.WeakValueDictionary()
 
-            
+sha1 = None            
 def encoded_path(root, identifiers, extension = ".enc", depth = 3,
                  digest_filenames=True):
+                 
     """Generate a unique file-accessible path from the given list of
     identifiers starting at the given root directory."""
-    ident = string.join(identifiers, "_")
-
+    ident = "_".join(identifiers)
+    
+    global sha1
+    if sha1 is None:
+        from beaker.crypto import sha1
+        
     if digest_filenames:
-        ident = sha1(ident).hexdigest()
+        if py3k:
+            ident = sha1(ident.encode('utf-8')).hexdigest()
+        else:
+            ident = sha1(ident).hexdigest()
     
     ident = os.path.basename(ident)
 
@@ -272,7 +209,7 @@ def coerce_session_params(params):
     rules = [
         ('data_dir', (str, types.NoneType), "data_dir must be a string "
          "referring to a directory."),
-        ('lock_dir', (str,), "lock_dir must be a string referring to a "
+        ('lock_dir', (str, types.NoneType), "lock_dir must be a string referring to a "
          "directory."),
         ('type', (str, types.NoneType), "Session type must be a string."),
         ('cookie_expires', (bool, datetime, timedelta), "Cookie expires was "
@@ -298,7 +235,7 @@ def coerce_cache_params(params):
     rules = [
         ('data_dir', (str, types.NoneType), "data_dir must be a string "
          "referring to a directory."),
-        ('lock_dir', (str,), "lock_dir must be a string referring to a "
+        ('lock_dir', (str, types.NoneType), "lock_dir must be a string referring to a "
          "directory."),
         ('type', (str,), "Cache type must be a string."),
         ('enabled', (bool, types.NoneType), "enabled must be true/false "
@@ -314,6 +251,7 @@ def coerce_cache_params(params):
 def parse_cache_config_options(config, include_defaults=True):
     """Parse configuration options and validate for use with the
     CacheManager"""
+    
     # Load default cache options
     if include_defaults:
         options= dict(type='memory', data_dir=None, expire=None, 
