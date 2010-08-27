@@ -24,6 +24,8 @@ import select
 import time
 import traceback
 
+from tornado import stack_context
+
 try:
     import signal
 except ImportError:
@@ -145,7 +147,7 @@ class IOLoop(object):
 
     def add_handler(self, fd, handler, events):
         """Registers the given handler to receive the given events for fd."""
-        self._handlers[fd] = handler
+        self._handlers[fd] = stack_context.wrap(handler)
         self._impl.register(fd, events | self.ERROR)
 
     def update_handler(self, fd, events):
@@ -206,11 +208,9 @@ class IOLoop(object):
 
             if self._timeouts:
                 now = time.time()
-                timeouts = self._timeouts
-                while timeouts and timeouts[0].deadline <= now:
-                    timeout = timeouts.pop(0)
+                while self._timeouts and self._timeouts[0].deadline <= now:
+                    timeout = self._timeouts.pop(0)
                     self._run_callback(timeout.callback)
-                self._timeouts = timeouts
                 if self._timeouts:
                     milliseconds = self._timeouts[0].deadline - now
                     poll_timeout = min(milliseconds, poll_timeout)
@@ -226,7 +226,14 @@ class IOLoop(object):
             try:
                 event_pairs = self._impl.poll(poll_timeout)
             except Exception, e:
-                if hasattr(e, 'errno') and e.errno == errno.EINTR:
+                # Depending on python version and IOLoop implementation,
+                # different exception types may be thrown and there are
+                # two ways EINTR might be signaled:
+                # * e.errno == errno.EINTR
+                # * e.args is like (errno.EINTR, 'Interrupted system call')
+                if (getattr(e, 'errno') == errno.EINTR or
+                    (isinstance(getattr(e, 'args'), tuple) and
+                     len(e.args) == 2 and e.args[0] == errno.EINTR)):
                     logging.warning("Interrupted system call", exc_info=1)
                     continue
                 else:
@@ -285,7 +292,7 @@ class IOLoop(object):
 
     def add_timeout(self, deadline, callback):
         """Calls the given callback at the time deadline from the I/O loop."""
-        timeout = _Timeout(deadline, callback)
+        timeout = _Timeout(deadline, stack_context.wrap(callback))
         bisect.insort(self._timeouts, timeout)
         return timeout
 
@@ -294,12 +301,8 @@ class IOLoop(object):
 
     def add_callback(self, callback):
         """Calls the given callback on the next I/O loop iteration."""
-        self._callbacks.add(callback)
+        self._callbacks.add(stack_context.wrap(callback))
         self._wake()
-
-    def remove_callback(self, callback):
-        """Removes the given callback from the next I/O loop iteration."""
-        self._callbacks.remove(callback)
 
     def _wake(self):
         try:
