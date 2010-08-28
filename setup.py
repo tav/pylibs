@@ -40,5 +40,3 @@ if sys.version_info < (2, 6):
             exit_on_error=True, cwd=join_path(path), redirect_stdout=False,
             redirect_stderr=False
             )
-
-print "Python extension modules successfully compiled."
