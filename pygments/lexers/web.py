@@ -10,6 +10,7 @@
 """
 
 import re
+import copy
 
 from pygments.lexer import RegexLexer, ExtendedRegexLexer, bygroups, using, \
      include, this
@@ -18,12 +19,14 @@ from pygments.token import \
 from pygments.util import get_bool_opt, get_list_opt, looks_like_xml, \
                           html_doctype_matches
 from pygments.lexers.agile import RubyLexer
+from pygments.lexers.compiled import ScalaLexer
 
 
 __all__ = ['HtmlLexer', 'XmlLexer', 'JavascriptLexer', 'CssLexer',
            'PhpLexer', 'ActionScriptLexer', 'XsltLexer', 'ActionScript3Lexer',
-           'MxmlLexer', 'HaxeLexer', 'HamlLexer', 'SassLexer',
-           'ObjectiveJLexer', 'CoffeeScriptLexer']
+           'MxmlLexer', 'HaxeLexer', 'HamlLexer', 'SassLexer', 'ScssLexer',
+           'ObjectiveJLexer', 'CoffeeScriptLexer', 'DuelLexer', 'ScamlLexer',
+           'JadeLexer']
 
 
 class JavascriptLexer(RegexLexer):
@@ -34,7 +37,8 @@ class JavascriptLexer(RegexLexer):
     name = 'JavaScript'
     aliases = ['js', 'javascript']
     filenames = ['*.js']
-    mimetypes = ['application/x-javascript', 'text/x-javascript', 'text/javascript']
+    mimetypes = ['application/javascript', 'application/x-javascript',
+                 'text/x-javascript', 'text/javascript']
 
     flags = re.DOTALL
     tokens = {
@@ -378,7 +382,7 @@ class CssLexer(RegexLexer):
             (r'\!important', Comment.Preproc),
             (r'/\*(?:.|\n)*?\*/', Comment),
             (r'\#[a-zA-Z0-9]{1,6}', Number),
-            (r'[\.-]?[0-9]*[\.]?[0-9]+(em|px|\%|pt|pc|in|mm|cm|ex)', Number),
+            (r'[\.-]?[0-9]*[\.]?[0-9]+(em|px|\%|pt|pc|in|mm|cm|ex|s)\b', Number),
             (r'-?[0-9]+', Number),
             (r'[~\^\*!%&<>\|+=@:,./?-]+', Operator),
             (r'[\[\]();]+', Punctuation),
@@ -763,7 +767,7 @@ class PhpLexer(RegexLexer):
         'string': [
             (r'"', String.Double, '#pop'),
             (r'[^{$"\\]+', String.Double),
-            (r'\\([nrt\"$]|[0-7]{1,3}|x[0-9A-Fa-f]{1,2})', String.Escape),
+            (r'\\([nrt\"$\\]|[0-7]{1,3}|x[0-9A-Fa-f]{1,2})', String.Escape),
             (r'\$[a-zA-Z_][a-zA-Z0-9_]*(\[\S+\]|->[a-zA-Z_][a-zA-Z0-9_]*)?',
              String.Interpol),
             (r'(\{\$\{)(.*?)(\}\})',
@@ -1217,6 +1221,10 @@ class HamlLexer(ExtendedRegexLexer):
     # which is ignored and used to wrap long lines.
     # To accomodate this, use this custom faux dot instead.
     _dot = r'(?: \|\n(?=.* \|)|.)'
+
+    # In certain places, a comma at the end of the line
+    # allows line wrapping as well.
+    _comma_dot = r'(?:,\s*\n|' + _dot + ')'
     tokens = {
         'root': [
             (r'[ \t]*\n', Text),
@@ -1230,7 +1238,7 @@ class HamlLexer(ExtendedRegexLexer):
 
         'eval-or-plain': [
             (r'[&!]?==', Punctuation, 'plain'),
-            (r'([&!]?[=~])(' + _dot + '*\n)',
+            (r'([&!]?[=~])(' + _comma_dot + '*\n)',
              bygroups(Punctuation, using(RubyLexer)),
              'root'),
             (r'', Text, 'plain'),
@@ -1247,7 +1255,7 @@ class HamlLexer(ExtendedRegexLexer):
              '#pop'),
             (r'-#' + _dot + '*\n', _starts_block(Comment.Preproc,
                                                  'haml-comment-block'), '#pop'),
-            (r'(-)(' + _dot + '*\n)',
+            (r'(-)(' + _comma_dot + '*\n)',
              bygroups(Punctuation, using(RubyLexer)),
              '#pop'),
             (r':' + _dot + '*\n', _starts_block(Name.Decorator, 'filter-block'),
@@ -1307,6 +1315,172 @@ class HamlLexer(ExtendedRegexLexer):
     }
 
 
+common_sass_tokens = {
+    'value': [
+        (r'[ \t]+', Text),
+        (r'[!$][\w-]+', Name.Variable),
+        (r'url\(', String.Other, 'string-url'),
+        (r'[a-z_-][\w-]*(?=\()', Name.Function),
+        (r'(azimuth|background-attachment|background-color|'
+         r'background-image|background-position|background-repeat|'
+         r'background|border-bottom-color|border-bottom-style|'
+         r'border-bottom-width|border-left-color|border-left-style|'
+         r'border-left-width|border-right|border-right-color|'
+         r'border-right-style|border-right-width|border-top-color|'
+         r'border-top-style|border-top-width|border-bottom|'
+         r'border-collapse|border-left|border-width|border-color|'
+         r'border-spacing|border-style|border-top|border|caption-side|'
+         r'clear|clip|color|content|counter-increment|counter-reset|'
+         r'cue-after|cue-before|cue|cursor|direction|display|'
+         r'elevation|empty-cells|float|font-family|font-size|'
+         r'font-size-adjust|font-stretch|font-style|font-variant|'
+         r'font-weight|font|height|letter-spacing|line-height|'
+         r'list-style-type|list-style-image|list-style-position|'
+         r'list-style|margin-bottom|margin-left|margin-right|'
+         r'margin-top|margin|marker-offset|marks|max-height|max-width|'
+         r'min-height|min-width|opacity|orphans|outline|outline-color|'
+         r'outline-style|outline-width|overflow|padding-bottom|'
+         r'padding-left|padding-right|padding-top|padding|page|'
+         r'page-break-after|page-break-before|page-break-inside|'
+         r'pause-after|pause-before|pause|pitch|pitch-range|'
+         r'play-during|position|quotes|richness|right|size|'
+         r'speak-header|speak-numeral|speak-punctuation|speak|'
+         r'speech-rate|stress|table-layout|text-align|text-decoration|'
+         r'text-indent|text-shadow|text-transform|top|unicode-bidi|'
+         r'vertical-align|visibility|voice-family|volume|white-space|'
+         r'widows|width|word-spacing|z-index|bottom|left|'
+         r'above|absolute|always|armenian|aural|auto|avoid|baseline|'
+         r'behind|below|bidi-override|blink|block|bold|bolder|both|'
+         r'capitalize|center-left|center-right|center|circle|'
+         r'cjk-ideographic|close-quote|collapse|condensed|continuous|'
+         r'crop|crosshair|cross|cursive|dashed|decimal-leading-zero|'
+         r'decimal|default|digits|disc|dotted|double|e-resize|embed|'
+         r'extra-condensed|extra-expanded|expanded|fantasy|far-left|'
+         r'far-right|faster|fast|fixed|georgian|groove|hebrew|help|'
+         r'hidden|hide|higher|high|hiragana-iroha|hiragana|icon|'
+         r'inherit|inline-table|inline|inset|inside|invert|italic|'
+         r'justify|katakana-iroha|katakana|landscape|larger|large|'
+         r'left-side|leftwards|level|lighter|line-through|list-item|'
+         r'loud|lower-alpha|lower-greek|lower-roman|lowercase|ltr|'
+         r'lower|low|medium|message-box|middle|mix|monospace|'
+         r'n-resize|narrower|ne-resize|no-close-quote|no-open-quote|'
+         r'no-repeat|none|normal|nowrap|nw-resize|oblique|once|'
+         r'open-quote|outset|outside|overline|pointer|portrait|px|'
+         r'relative|repeat-x|repeat-y|repeat|rgb|ridge|right-side|'
+         r'rightwards|s-resize|sans-serif|scroll|se-resize|'
+         r'semi-condensed|semi-expanded|separate|serif|show|silent|'
+         r'slow|slower|small-caps|small-caption|smaller|soft|solid|'
+         r'spell-out|square|static|status-bar|super|sw-resize|'
+         r'table-caption|table-cell|table-column|table-column-group|'
+         r'table-footer-group|table-header-group|table-row|'
+         r'table-row-group|text|text-bottom|text-top|thick|thin|'
+         r'transparent|ultra-condensed|ultra-expanded|underline|'
+         r'upper-alpha|upper-latin|upper-roman|uppercase|url|'
+         r'visible|w-resize|wait|wider|x-fast|x-high|x-large|x-loud|'
+         r'x-low|x-small|x-soft|xx-large|xx-small|yes)\b', Name.Constant),
+        (r'(indigo|gold|firebrick|indianred|darkolivegreen|'
+         r'darkseagreen|mediumvioletred|mediumorchid|chartreuse|'
+         r'mediumslateblue|springgreen|crimson|lightsalmon|brown|'
+         r'turquoise|olivedrab|cyan|skyblue|darkturquoise|'
+         r'goldenrod|darkgreen|darkviolet|darkgray|lightpink|'
+         r'darkmagenta|lightgoldenrodyellow|lavender|yellowgreen|thistle|'
+         r'violet|orchid|ghostwhite|honeydew|cornflowerblue|'
+         r'darkblue|darkkhaki|mediumpurple|cornsilk|bisque|slategray|'
+         r'darkcyan|khaki|wheat|deepskyblue|darkred|steelblue|aliceblue|'
+         r'gainsboro|mediumturquoise|floralwhite|coral|lightgrey|'
+         r'lightcyan|darksalmon|beige|azure|lightsteelblue|oldlace|'
+         r'greenyellow|royalblue|lightseagreen|mistyrose|sienna|'
+         r'lightcoral|orangered|navajowhite|palegreen|burlywood|'
+         r'seashell|mediumspringgreen|papayawhip|blanchedalmond|'
+         r'peru|aquamarine|darkslategray|ivory|dodgerblue|'
+         r'lemonchiffon|chocolate|orange|forestgreen|slateblue|'
+         r'mintcream|antiquewhite|darkorange|cadetblue|moccasin|'
+         r'limegreen|saddlebrown|darkslateblue|lightskyblue|deeppink|'
+         r'plum|darkgoldenrod|sandybrown|magenta|tan|'
+         r'rosybrown|pink|lightblue|palevioletred|mediumseagreen|'
+         r'dimgray|powderblue|seagreen|snow|mediumblue|midnightblue|'
+         r'paleturquoise|palegoldenrod|whitesmoke|darkorchid|salmon|'
+         r'lightslategray|lawngreen|lightgreen|tomato|hotpink|'
+         r'lightyellow|lavenderblush|linen|mediumaquamarine|'
+         r'blueviolet|peachpuff)\b', Name.Entity),
+        (r'(black|silver|gray|white|maroon|red|purple|fuchsia|green|'
+         r'lime|olive|yellow|navy|blue|teal|aqua)\b', Name.Builtin),
+        (r'\!(important|default)', Name.Exception),
+        (r'(true|false)', Name.Pseudo),
+        (r'(and|or|not)', Operator.Word),
+        (r'/\*', Comment.Multiline, 'inline-comment'),
+        (r'//[^\n]*', Comment.Single),
+        (r'\#[a-z0-9]{1,6}', Number.Hex),
+        (r'(-?\d+)(\%|[a-z]+)?', bygroups(Number.Integer, Keyword.Type)),
+        (r'(-?\d*\.\d+)(\%|[a-z]+)?', bygroups(Number.Float, Keyword.Type)),
+        (r'#{', String.Interpol, 'interpolation'),
+        (r'[~\^\*!&%<>\|+=@:,./?-]+', Operator),
+        (r'[\[\]()]+', Punctuation),
+        (r'"', String.Double, 'string-double'),
+        (r"'", String.Single, 'string-single'),
+        (r'[a-z_-][\w-]*', Name),
+    ],
+
+    'interpolation': [
+        (r'\}', String.Interpol, '#pop'),
+        include('value'),
+    ],
+
+    'selector': [
+        (r'[ \t]+', Text),
+        (r'\:', Name.Decorator, 'pseudo-class'),
+        (r'\.', Name.Class, 'class'),
+        (r'\#', Name.Namespace, 'id'),
+        (r'[a-zA-Z0-9_-]+', Name.Tag),
+        (r'#\{', String.Interpol, 'interpolation'),
+        (r'&', Keyword),
+        (r'[~\^\*!&\[\]\(\)<>\|+=@:;,./?-]', Operator),
+        (r'"', String.Double, 'string-double'),
+        (r"'", String.Single, 'string-single'),
+    ],
+
+    'string-double': [
+        (r'(\\.|#(?=[^\n{])|[^\n"#])+', String.Double),
+        (r'#\{', String.Interpol, 'interpolation'),
+        (r'"', String.Double, '#pop'),
+    ],
+
+    'string-single': [
+        (r"(\\.|#(?=[^\n{])|[^\n'#])+", String.Double),
+        (r'#\{', String.Interpol, 'interpolation'),
+        (r"'", String.Double, '#pop'),
+    ],
+
+    'string-url': [
+        (r'(\\#|#(?=[^\n{])|[^\n#)])+', String.Other),
+        (r'#\{', String.Interpol, 'interpolation'),
+        (r'\)', String.Other, '#pop'),
+    ],
+
+    'pseudo-class': [
+        (r'[\w-]+', Name.Decorator),
+        (r'#\{', String.Interpol, 'interpolation'),
+        (r'', Text, '#pop'),
+    ],
+
+    'class': [
+        (r'[\w-]+', Name.Class),
+        (r'#\{', String.Interpol, 'interpolation'),
+        (r'', Text, '#pop'),
+    ],
+
+    'id': [
+        (r'[\w-]+', Name.Namespace),
+        (r'#\{', String.Interpol, 'interpolation'),
+        (r'', Text, '#pop'),
+    ],
+
+    'for': [
+        (r'(from|to|through)', Operator.Word),
+        include('value'),
+    ],
+}
+
 class SassLexer(ExtendedRegexLexer):
     """
     For Sass stylesheets.
@@ -1333,14 +1507,17 @@ class SassLexer(ExtendedRegexLexer):
              'root'),
             (r'@import', Keyword, 'import'),
             (r'@for', Keyword, 'for'),
-            (r'@(debug|if|while)', Keyword, 'script'),
+            (r'@(debug|warn|if|while)', Keyword, 'value'),
+            (r'(@mixin)( [\w-]+)', bygroups(Keyword, Name.Function), 'value'),
+            (r'(@include)( [\w-]+)', bygroups(Keyword, Name.Decorator), 'value'),
+            (r'@extend', Keyword, 'selector'),
             (r'@[a-z0-9_-]+', Keyword, 'selector'),
-            (r'=[\w-]+', Name.Function, 'script'),
-            (r'\+[\w-]+', Name.Decorator, 'script'),
-            (r'(![a-z_]\w*)([ \t]*(?:\|\|)?=)',
-             bygroups(Name.Variable, Operator), 'script'),
+            (r'=[\w-]+', Name.Function, 'value'),
+            (r'\+[\w-]+', Name.Decorator, 'value'),
+            (r'([!$][\w-]\w*)([ \t]*(?:(?:\|\|)?=|:))',
+             bygroups(Name.Variable, Operator), 'value'),
             (r':', Name.Attribute, 'old-style-attr'),
-            (r'(?=[^\s:"\[]+\s*[=:]([ \t]|$))', Name.Attribute, 'new-style-attr'),
+            (r'(?=.+?[=:]([^a-z]|$))', Name.Attribute, 'new-style-attr'),
             (r'', Text, 'selector'),
         ],
 
@@ -1360,210 +1537,83 @@ class SassLexer(ExtendedRegexLexer):
             (r'\n', Text, 'root'),
         ],
 
-        'for': [
-            (r'(from|to|through)', Operator.Word),
-            include('script'),
-        ],
-
         'old-style-attr': [
             (r'[^\s:="\[]+', Name.Attribute),
             (r'#{', String.Interpol, 'interpolation'),
-            (r'[ \t]*=', Operator, 'script'),
+            (r'[ \t]*=', Operator, 'value'),
             (r'', Text, 'value'),
         ],
 
         'new-style-attr': [
             (r'[^\s:="\[]+', Name.Attribute),
             (r'#{', String.Interpol, 'interpolation'),
-            (r'[ \t]*=', Operator, 'script'),
-            (r':', Name.Attribute, 'value'),
-        ],
-
-        'value': [
-            (r'[ \t]+', Text),
-            (r'url\(', String.Other, 'string-url'),
-            (r'(azimuth|background-attachment|background-color|'
-             r'background-image|background-position|background-repeat|'
-             r'background|border-bottom-color|border-bottom-style|'
-             r'border-bottom-width|border-left-color|border-left-style|'
-             r'border-left-width|border-right|border-right-color|'
-             r'border-right-style|border-right-width|border-top-color|'
-             r'border-top-style|border-top-width|border-bottom|'
-             r'border-collapse|border-left|border-width|border-color|'
-             r'border-spacing|border-style|border-top|border|caption-side|'
-             r'clear|clip|color|content|counter-increment|counter-reset|'
-             r'cue-after|cue-before|cue|cursor|direction|display|'
-             r'elevation|empty-cells|float|font-family|font-size|'
-             r'font-size-adjust|font-stretch|font-style|font-variant|'
-             r'font-weight|font|height|letter-spacing|line-height|'
-             r'list-style-type|list-style-image|list-style-position|'
-             r'list-style|margin-bottom|margin-left|margin-right|'
-             r'margin-top|margin|marker-offset|marks|max-height|max-width|'
-             r'min-height|min-width|opacity|orphans|outline|outline-color|'
-             r'outline-style|outline-width|overflow|padding-bottom|'
-             r'padding-left|padding-right|padding-top|padding|page|'
-             r'page-break-after|page-break-before|page-break-inside|'
-             r'pause-after|pause-before|pause|pitch|pitch-range|'
-             r'play-during|position|quotes|richness|right|size|'
-             r'speak-header|speak-numeral|speak-punctuation|speak|'
-             r'speech-rate|stress|table-layout|text-align|text-decoration|'
-             r'text-indent|text-shadow|text-transform|top|unicode-bidi|'
-             r'vertical-align|visibility|voice-family|volume|white-space|'
-             r'widows|width|word-spacing|z-index|bottom|left|'
-             r'above|absolute|always|armenian|aural|auto|avoid|baseline|'
-             r'behind|below|bidi-override|blink|block|bold|bolder|both|'
-             r'capitalize|center-left|center-right|center|circle|'
-             r'cjk-ideographic|close-quote|collapse|condensed|continuous|'
-             r'crop|crosshair|cross|cursive|dashed|decimal-leading-zero|'
-             r'decimal|default|digits|disc|dotted|double|e-resize|embed|'
-             r'extra-condensed|extra-expanded|expanded|fantasy|far-left|'
-             r'far-right|faster|fast|fixed|georgian|groove|hebrew|help|'
-             r'hidden|hide|higher|high|hiragana-iroha|hiragana|icon|'
-             r'inherit|inline-table|inline|inset|inside|invert|italic|'
-             r'justify|katakana-iroha|katakana|landscape|larger|large|'
-             r'left-side|leftwards|level|lighter|line-through|list-item|'
-             r'loud|lower-alpha|lower-greek|lower-roman|lowercase|ltr|'
-             r'lower|low|medium|message-box|middle|mix|monospace|'
-             r'n-resize|narrower|ne-resize|no-close-quote|no-open-quote|'
-             r'no-repeat|none|normal|nowrap|nw-resize|oblique|once|'
-             r'open-quote|outset|outside|overline|pointer|portrait|px|'
-             r'relative|repeat-x|repeat-y|repeat|rgb|ridge|right-side|'
-             r'rightwards|s-resize|sans-serif|scroll|se-resize|'
-             r'semi-condensed|semi-expanded|separate|serif|show|silent|'
-             r'slow|slower|small-caps|small-caption|smaller|soft|solid|'
-             r'spell-out|square|static|status-bar|super|sw-resize|'
-             r'table-caption|table-cell|table-column|table-column-group|'
-             r'table-footer-group|table-header-group|table-row|'
-             r'table-row-group|text|text-bottom|text-top|thick|thin|'
-             r'transparent|ultra-condensed|ultra-expanded|underline|'
-             r'upper-alpha|upper-latin|upper-roman|uppercase|url|'
-             r'visible|w-resize|wait|wider|x-fast|x-high|x-large|x-loud|'
-             r'x-low|x-small|x-soft|xx-large|xx-small|yes)\b', Name.Constant),
-            (r'(indigo|gold|firebrick|indianred|yellow|darkolivegreen|'
-             r'darkseagreen|mediumvioletred|mediumorchid|chartreuse|'
-             r'mediumslateblue|black|springgreen|crimson|lightsalmon|brown|'
-             r'turquoise|olivedrab|cyan|silver|skyblue|gray|darkturquoise|'
-             r'goldenrod|darkgreen|darkviolet|darkgray|lightpink|teal|'
-             r'darkmagenta|lightgoldenrodyellow|lavender|yellowgreen|thistle|'
-             r'violet|navy|orchid|blue|ghostwhite|honeydew|cornflowerblue|'
-             r'darkblue|darkkhaki|mediumpurple|cornsilk|red|bisque|slategray|'
-             r'darkcyan|khaki|wheat|deepskyblue|darkred|steelblue|aliceblue|'
-             r'gainsboro|mediumturquoise|floralwhite|coral|purple|lightgrey|'
-             r'lightcyan|darksalmon|beige|azure|lightsteelblue|oldlace|'
-             r'greenyellow|royalblue|lightseagreen|mistyrose|sienna|'
-             r'lightcoral|orangered|navajowhite|lime|palegreen|burlywood|'
-             r'seashell|mediumspringgreen|fuchsia|papayawhip|blanchedalmond|'
-             r'peru|aquamarine|white|darkslategray|ivory|dodgerblue|'
-             r'lemonchiffon|chocolate|orange|forestgreen|slateblue|olive|'
-             r'mintcream|antiquewhite|darkorange|cadetblue|moccasin|'
-             r'limegreen|saddlebrown|darkslateblue|lightskyblue|deeppink|'
-             r'plum|aqua|darkgoldenrod|maroon|sandybrown|magenta|tan|'
-             r'rosybrown|pink|lightblue|palevioletred|mediumseagreen|'
-             r'dimgray|powderblue|seagreen|snow|mediumblue|midnightblue|'
-             r'paleturquoise|palegoldenrod|whitesmoke|darkorchid|salmon|'
-             r'lightslategray|lawngreen|lightgreen|tomato|hotpink|'
-             r'lightyellow|lavenderblush|linen|mediumaquamarine|green|'
-             r'blueviolet|peachpuff)\b', Name.Entity),
-            (r'\!important', Name.Exception),
-            (r'/\*', Comment, 'inline-comment'),
-            (r'\#[a-z0-9]{1,6}', Number.Hex),
-            (r'(-?\d+)(\%|[a-z]+)?', bygroups(Number.Integer, Keyword.Type)),
-            (r'(-?\d*\.\d+)(\%|[a-z]+)?', bygroups(Number.Float, Keyword.Type)),
-            (r'#{', String.Interpol, 'interpolation'),
-            (r'[~\^\*!&%<>\|+=@:,./?-]+', Operator),
-            (r'[\[\]();]+', Punctuation),
-            (r'"', String.Double, 'string-double'),
-            (r"'", String.Single, 'string-single'),
-            (r'[a-z][\w-]*', Name),
-            (r'\n', Text, 'root'),
-        ],
-
-        'script': [
-            (r'[ \t]+', Text),
-            (r'![\w_]+', Name.Variable),
-            (r'[+\-*/%=(),!><]', Operator),
-            (r'"', String.Double, 'string-double'),
-            (r"'", String.Single, 'string-single'),
-            (r'\#[a-z0-9]{1,6}', Number.Hex),
-            (r'(-?\d+)(\%|[a-z]+)?', bygroups(Number.Integer, Keyword.Type)),
-            (r'(-?\d*\.\d+)(\%|[a-z]+)?', bygroups(Number.Float, Keyword.Type)),
-            (r'(black|silver|gray|white|maroon|red|purple|fuchsia|green|'
-             r'lime|olive|yellow|navy|blue|teal|aqua)\b', Name.Builtin),
-            (r'(true|false)', Name.Pseudo),
-            (r'(and|or|not)', Operator.Word),
-            (r'(\\.|[^\s\\+*\/%(),=!])+(?=[ \t]*\()', Name.Function),
-            (r'(\\.|[^\s\\+*\/%(),=!])+', Name),
-            (r'\n', Text, 'root'),
-        ],
-
-        'interpolation': [
-            (r'\}', String.Interpol, '#pop'),
-            include('script'),
-        ],
-
-        'selector': [
-            (r'[ \t]+', Text),
-            (r'\:', Name.Decorator, 'pseudo-class'),
-            (r'\.', Name.Class, 'class'),
-            (r'\#', Name.Namespace, 'id'),
-            (r'[a-zA-Z0-9_-]+', Name.Tag),
-            (r'#\{', String.Interpol, 'interpolation'),
-            (r'&', Keyword),
-            (r'[~\^\*!&\[\]\(\)<>\|+=@:;,./?-]', Operator),
-            (r'"', String.Double, 'string-double'),
-            (r"'", String.Single, 'string-single'),
-            (r'\n', Text, 'root'),
-        ],
-
-        'string-double': [
-            (r'(\\.|#(?=[^\n{])|[^\n"#])+', String.Double),
-            (r'#\{', String.Interpol, 'interpolation'),
-            (r'"', String.Double, '#pop'),
-        ],
-
-        'string-single': [
-            (r"(\\.|#(?=[^\n{])|[^\n'#])+", String.Double),
-            (r'#\{', String.Interpol, 'interpolation'),
-            (r"'", String.Double, '#pop'),
-        ],
-
-        'string-url': [
-            (r'(\\#|#(?=[^\n{])|[^\n#)])+', String.Other),
-            (r'#\{', String.Interpol, 'interpolation'),
-            (r'\)', String.Other, '#pop'),
+            (r'[ \t]*[=:]', Operator, 'value'),
         ],
 
         'inline-comment': [
-            (r"(\\#|#(?=[^\n{])|\*(?=[^\n/])|[^\n#*])+", Comment),
+            (r"(\\#|#(?=[^\n{])|\*(?=[^\n/])|[^\n#*])+", Comment.Multiline),
             (r'#\{', String.Interpol, 'interpolation'),
             (r"\*/", Comment, '#pop'),
         ],
+    }
+    for group, common in common_sass_tokens.iteritems():
+        tokens[group] = copy.copy(common)
+    tokens['value'].append((r'\n', Text, 'root'))
+    tokens['selector'].append((r'\n', Text, 'root'))
 
-        'pseudo-class': [
-            (r'[\w-]+', Name.Decorator),
-            (r'#\{', String.Interpol, 'interpolation'),
-            (r'', Text, '#pop'),
+
+class ScssLexer(RegexLexer):
+    """
+    For SCSS stylesheets.
+    """
+
+    name = 'SCSS'
+    aliases = ['scss']
+    filenames = ['*.scss']
+    mimetypes = ['text/x-scss']
+
+    flags = re.IGNORECASE | re.DOTALL
+    tokens = {
+        'root': [
+            (r'\s+', Text),
+            (r'//.*?\n', Comment.Single),
+            (r'/\*.*?\*/', Comment.Multiline),
+            (r'@import', Keyword, 'value'),
+            (r'@for', Keyword, 'for'),
+            (r'@(debug|warn|if|while)', Keyword, 'value'),
+            (r'(@mixin)( [\w-]+)', bygroups(Keyword, Name.Function), 'value'),
+            (r'(@include)( [\w-]+)', bygroups(Keyword, Name.Decorator), 'value'),
+            (r'@extend', Keyword, 'selector'),
+            (r'@[a-z0-9_-]+', Keyword, 'selector'),
+            (r'(\$[\w-]\w*)([ \t]*:)', bygroups(Name.Variable, Operator), 'value'),
+            (r'(?=[^;{}][;}])', Name.Attribute, 'attr'),
+            (r'(?=[^;{}:]+:[^a-z])', Name.Attribute, 'attr'),
+            (r'', Text, 'selector'),
         ],
 
-        'class': [
-            (r'[\w-]+', Name.Class),
-            (r'#\{', String.Interpol, 'interpolation'),
-            (r'', Text, '#pop'),
+        'attr': [
+            (r'[^\s:="\[]+', Name.Attribute),
+            (r'#{', String.Interpol, 'interpolation'),
+            (r'[ \t]*:', Operator, 'value'),
         ],
 
-        'id': [
-            (r'[\w-]+', Name.Namespace),
+        'inline-comment': [
+            (r"(\\#|#(?=[^{])|\*(?=[^/])|[^#*])+", Comment.Multiline),
             (r'#\{', String.Interpol, 'interpolation'),
-            (r'', Text, '#pop'),
+            (r"\*/", Comment, '#pop'),
         ],
     }
+    for group, common in common_sass_tokens.iteritems():
+        tokens[group] = copy.copy(common)
+    tokens['value'].extend([(r'\n', Text), (r'[;{}]', Punctuation, 'root')])
+    tokens['selector'].extend([(r'\n', Text), (r'[;{}]', Punctuation, 'root')])
 
 
 class CoffeeScriptLexer(RegexLexer):
     """
     For `CoffeeScript`_ source code.
 
-    .. _CoffeeScript: http://jashkenas.github.com/coffee-script/
+    .. _CoffeeScript: http://coffeescript.org
 
     *New in Pygments 1.3.*
     """
@@ -1592,28 +1642,286 @@ class CoffeeScriptLexer(RegexLexer):
         'root': [
             (r'^(?=\s|/|<!--)', Text, 'slashstartsregex'),
             include('commentsandwhitespace'),
-            (r'\+\+|--|~|&&|\band\b|\bor\b|\bis\b|\bisnt\b|\bnot\b|\?|:|'
+            (r'\+\+|--|~|&&|\band\b|\bor\b|\bis\b|\bisnt\b|\bnot\b|\?|:|=|'
              r'\|\||\\(?=\n)|(<<|>>>?|==?|!=?|[-<>+*`%&\|\^/])=?',
              Operator, 'slashstartsregex'),
+            (r'\([^()]*\)\s*->', Name.Function),
             (r'[{(\[;,]', Punctuation, 'slashstartsregex'),
             (r'[})\].]', Punctuation),
             (r'(for|in|of|while|break|return|continue|switch|when|then|if|else|'
              r'throw|try|catch|finally|new|delete|typeof|instanceof|super|'
-             r'extends|this)\b', Keyword, 'slashstartsregex'),
+             r'extends|this|class|by)\b', Keyword, 'slashstartsregex'),
             (r'(true|false|yes|no|on|off|null|NaN|Infinity|undefined)\b',
              Keyword.Constant),
             (r'(Array|Boolean|Date|Error|Function|Math|netscape|'
              r'Number|Object|Packages|RegExp|String|sun|decodeURI|'
              r'decodeURIComponent|encodeURI|encodeURIComponent|'
-             r'Error|eval|isFinite|isNaN|parseFloat|parseInt|document|this|'
-             r'window)\b', Name.Builtin),
-            (r'[$a-zA-Z_][a-zA-Z0-9_\.:]*:\s', Name.Variable,
-             'slashstartsregex'),
-            (r'[$a-zA-Z_][a-zA-Z0-9_]*', Name.Other),
+             r'eval|isFinite|isNaN|parseFloat|parseInt|document|window)\b',
+             Name.Builtin),
+            (r'[$a-zA-Z_][a-zA-Z0-9_\.:]*\s*[:=]\s', Name.Variable,
+              'slashstartsregex'),
+            (r'@[$a-zA-Z_][a-zA-Z0-9_\.:]*\s*[:=]\s', Name.Variable.Instance,
+              'slashstartsregex'),
+            (r'@?[$a-zA-Z_][a-zA-Z0-9_]*', Name.Other, 'slashstartsregex'),
             (r'[0-9][0-9]*\.[0-9]+([eE][0-9]+)?[fd]?', Number.Float),
             (r'0x[0-9a-fA-F]+', Number.Hex),
             (r'[0-9]+', Number.Integer),
             (r'"(\\\\|\\"|[^"])*"', String.Double),
             (r"'(\\\\|\\'|[^'])*'", String.Single),
         ]
+    }
+
+class DuelLexer(RegexLexer):
+    """
+    Lexer for Duel Views Engine (formerly JBST) markup with JavaScript code blocks.
+    See http://duelengine.org/.
+    See http://jsonml.org/jbst/.
+
+    *New in Pygments 1.4.*
+    """
+
+    name = 'Duel'
+    aliases = ['duel', 'Duel Engine', 'Duel View', 'JBST', 'jbst', 'JsonML+BST']
+    filenames = ['*.duel','*.jbst']
+    mimetypes = ['text/x-duel','text/x-jbst']
+
+    flags = re.DOTALL
+
+    tokens = {
+        'root': [
+            (r'(<%[@=#!:]?)(.*?)(%>)',
+             bygroups(Name.Tag, using(JavascriptLexer), Name.Tag)),
+            (r'(<%\$)(.*?)(:)(.*?)(%>)',
+             bygroups(Name.Tag, Name.Function, Punctuation, String, Name.Tag)),
+            (r'(<%--)(.*?)(--%>)',
+             bygroups(Name.Tag, Comment.Multiline, Name.Tag)),
+            (r'(<script.*?>)(.*?)(</script>)',
+             bygroups(using(HtmlLexer),
+                      using(JavascriptLexer), using(HtmlLexer))),
+            (r'(.+?)(?=<)', using(HtmlLexer)),
+            (r'.+', using(HtmlLexer)),
+        ],
+    }
+
+
+class ScamlLexer(ExtendedRegexLexer):
+    """
+    For Scaml markup.
+    Scaml is Haml for Scala, see:
+    http://scalate.fusesource.org/documentation/scaml-reference.html#features
+
+    *New in Pygments 1.4.*
+    """
+
+    name = 'Scaml'
+    aliases = ['scaml', 'SCAML']
+    filenames = ['*.scaml']
+    mimetypes = ['text/x-scaml']
+
+    flags = re.IGNORECASE
+    # Scaml does not yet support the " |\n" notation to
+    # wrap long lines.  Once it does, use the custom faux
+    # dot instead.
+    # _dot = r'(?: \|\n(?=.* \|)|.)'
+    _dot = r'.'
+
+    tokens = {
+        'root': [
+            (r'[ \t]*\n', Text),
+            (r'[ \t]*', _indentation),
+        ],
+
+        'css': [
+            (r'\.[a-z0-9_:-]+', Name.Class, 'tag'),
+            (r'\#[a-z0-9_:-]+', Name.Function, 'tag'),
+        ],
+
+        'eval-or-plain': [
+            (r'[&!]?==', Punctuation, 'plain'),
+            (r'([&!]?[=~])(' + _dot + '*\n)',
+             bygroups(Punctuation, using(ScalaLexer)),
+             'root'),
+            (r'', Text, 'plain'),
+        ],
+
+        'content': [
+            include('css'),
+            (r'%[a-z0-9_:-]+', Name.Tag, 'tag'),
+            (r'!!!' + _dot + '*\n', Name.Namespace, '#pop'),
+            (r'(/)(\[' + _dot + '*?\])(' + _dot + '*\n)',
+             bygroups(Comment, Comment.Special, Comment),
+             '#pop'),
+            (r'/' + _dot + '*\n', _starts_block(Comment, 'html-comment-block'),
+             '#pop'),
+            (r'-#' + _dot + '*\n', _starts_block(Comment.Preproc,
+                                                 'scaml-comment-block'), '#pop'),
+            (r'(-@\s*)(import)?(' + _dot + '*\n)',
+             bygroups(Punctuation, Keyword, using(ScalaLexer)),
+             '#pop'),
+            (r'(-)(' + _dot + '*\n)',
+             bygroups(Punctuation, using(ScalaLexer)),
+             '#pop'),
+            (r':' + _dot + '*\n', _starts_block(Name.Decorator, 'filter-block'),
+             '#pop'),
+            include('eval-or-plain'),
+        ],
+
+        'tag': [
+            include('css'),
+            (r'\{(,\n|' + _dot + ')*?\}', using(ScalaLexer)),
+            (r'\[' + _dot + '*?\]', using(ScalaLexer)),
+            (r'\(', Text, 'html-attributes'),
+            (r'/[ \t]*\n', Punctuation, '#pop:2'),
+            (r'[<>]{1,2}(?=[ \t=])', Punctuation),
+            include('eval-or-plain'),
+        ],
+
+        'plain': [
+            (r'([^#\n]|#[^{\n]|(\\\\)*\\#\{)+', Text),
+            (r'(#\{)(' + _dot + '*?)(\})',
+             bygroups(String.Interpol, using(ScalaLexer), String.Interpol)),
+            (r'\n', Text, 'root'),
+        ],
+
+        'html-attributes': [
+            (r'\s+', Text),
+            (r'[a-z0-9_:-]+[ \t]*=', Name.Attribute, 'html-attribute-value'),
+            (r'[a-z0-9_:-]+', Name.Attribute),
+            (r'\)', Text, '#pop'),
+        ],
+
+        'html-attribute-value': [
+            (r'[ \t]+', Text),
+            (r'[a-z0-9_]+', Name.Variable, '#pop'),
+            (r'@[a-z0-9_]+', Name.Variable.Instance, '#pop'),
+            (r'\$[a-z0-9_]+', Name.Variable.Global, '#pop'),
+            (r"'(\\\\|\\'|[^'\n])*'", String, '#pop'),
+            (r'"(\\\\|\\"|[^"\n])*"', String, '#pop'),
+        ],
+
+        'html-comment-block': [
+            (_dot + '+', Comment),
+            (r'\n', Text, 'root'),
+        ],
+
+        'scaml-comment-block': [
+            (_dot + '+', Comment.Preproc),
+            (r'\n', Text, 'root'),
+        ],
+
+        'filter-block': [
+            (r'([^#\n]|#[^{\n]|(\\\\)*\\#\{)+', Name.Decorator),
+            (r'(#\{)(' + _dot + '*?)(\})',
+             bygroups(String.Interpol, using(ScalaLexer), String.Interpol)),
+            (r'\n', Text, 'root'),
+        ],
+    }
+
+
+class JadeLexer(ExtendedRegexLexer):
+    """
+    For Jade markup.
+    Jade is a variant of Scaml, see:
+    http://scalate.fusesource.org/documentation/scaml-reference.html
+
+    *New in Pygments 1.4.*
+    """
+
+    name = 'Jade'
+    aliases = ['jade', 'JADE']
+    filenames = ['*.jade']
+    mimetypes = ['text/x-jade']
+
+    flags = re.IGNORECASE
+    _dot = r'.'
+
+    tokens = {
+        'root': [
+            (r'[ \t]*\n', Text),
+            (r'[ \t]*', _indentation),
+        ],
+
+        'css': [
+            (r'\.[a-z0-9_:-]+', Name.Class, 'tag'),
+            (r'\#[a-z0-9_:-]+', Name.Function, 'tag'),
+        ],
+
+        'eval-or-plain': [
+            (r'[&!]?==', Punctuation, 'plain'),
+            (r'([&!]?[=~])(' + _dot + '*\n)',
+             bygroups(Punctuation, using(ScalaLexer)),  'root'),
+            (r'', Text, 'plain'),
+        ],
+
+        'content': [
+            include('css'),
+            (r'!!!' + _dot + '*\n', Name.Namespace, '#pop'),
+            (r'(/)(\[' + _dot + '*?\])(' + _dot + '*\n)',
+             bygroups(Comment, Comment.Special, Comment),
+             '#pop'),
+            (r'/' + _dot + '*\n', _starts_block(Comment, 'html-comment-block'),
+             '#pop'),
+            (r'-#' + _dot + '*\n', _starts_block(Comment.Preproc,
+                                                 'scaml-comment-block'), '#pop'),
+            (r'(-@\s*)(import)?(' + _dot + '*\n)',
+             bygroups(Punctuation, Keyword, using(ScalaLexer)),
+             '#pop'),
+            (r'(-)(' + _dot + '*\n)',
+             bygroups(Punctuation, using(ScalaLexer)),
+             '#pop'),
+            (r':' + _dot + '*\n', _starts_block(Name.Decorator, 'filter-block'),
+             '#pop'),
+            (r'[a-z0-9_:-]+', Name.Tag, 'tag'),
+            (r'|', Text, 'eval-or-plain'),
+        ],
+
+        'tag': [
+            include('css'),
+            (r'\{(,\n|' + _dot + ')*?\}', using(ScalaLexer)),
+            (r'\[' + _dot + '*?\]', using(ScalaLexer)),
+            (r'\(', Text, 'html-attributes'),
+            (r'/[ \t]*\n', Punctuation, '#pop:2'),
+            (r'[<>]{1,2}(?=[ \t=])', Punctuation),
+            include('eval-or-plain'),
+        ],
+
+        'plain': [
+            (r'([^#\n]|#[^{\n]|(\\\\)*\\#\{)+', Text),
+            (r'(#\{)(' + _dot + '*?)(\})',
+             bygroups(String.Interpol, using(ScalaLexer), String.Interpol)),
+            (r'\n', Text, 'root'),
+        ],
+
+        'html-attributes': [
+            (r'\s+', Text),
+            (r'[a-z0-9_:-]+[ \t]*=', Name.Attribute, 'html-attribute-value'),
+            (r'[a-z0-9_:-]+', Name.Attribute),
+            (r'\)', Text, '#pop'),
+        ],
+
+        'html-attribute-value': [
+            (r'[ \t]+', Text),
+            (r'[a-z0-9_]+', Name.Variable, '#pop'),
+            (r'@[a-z0-9_]+', Name.Variable.Instance, '#pop'),
+            (r'\$[a-z0-9_]+', Name.Variable.Global, '#pop'),
+            (r"'(\\\\|\\'|[^'\n])*'", String, '#pop'),
+            (r'"(\\\\|\\"|[^"\n])*"', String, '#pop'),
+        ],
+
+        'html-comment-block': [
+            (_dot + '+', Comment),
+            (r'\n', Text, 'root'),
+        ],
+
+        'scaml-comment-block': [
+            (_dot + '+', Comment.Preproc),
+            (r'\n', Text, 'root'),
+        ],
+
+        'filter-block': [
+            (r'([^#\n]|#[^{\n]|(\\\\)*\\#\{)+', Name.Decorator),
+            (r'(#\{)(' + _dot + '*?)(\})',
+             bygroups(String.Interpol, using(ScalaLexer), String.Interpol)),
+            (r'\n', Text, 'root'),
+        ],
     }
