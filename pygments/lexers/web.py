@@ -1641,6 +1641,9 @@ class CoffeeScriptLexer(RegexLexer):
         ],
         'root': [
             (r'^(?=\s|/|<!--)', Text, 'slashstartsregex'),
+            (r'"""[^"\\]*(?:(?:\\.|"(?!""))[^"\\]*)*"""', String.Double),
+            (r'"(\\\\|\\"|[^"])*"', String.Double),
+            (r"'(\\\\|\\'|[^'])*'", String.Single),
             include('commentsandwhitespace'),
             (r'\+\+|--|~|&&|\band\b|\bor\b|\bis\b|\bisnt\b|\bnot\b|\?|:|=|'
              r'\|\||\\(?=\n)|(<<|>>>?|==?|!=?|[-<>+*`%&\|\^/])=?',
@@ -1666,8 +1669,6 @@ class CoffeeScriptLexer(RegexLexer):
             (r'[0-9][0-9]*\.[0-9]+([eE][0-9]+)?[fd]?', Number.Float),
             (r'0x[0-9a-fA-F]+', Number.Hex),
             (r'[0-9]+', Number.Integer),
-            (r'"(\\\\|\\"|[^"])*"', String.Double),
-            (r"'(\\\\|\\'|[^'])*'", String.Single),
         ]
     }
 
