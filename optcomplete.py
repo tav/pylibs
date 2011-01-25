@@ -1,5 +1,5 @@
-# Changes to this file by The Ampify Authors are according to the
-# Public Domain license that can be found in the root LICENSE file.
+# Changes to this file by The Ampify Authors are in the Public Domain.
+# See the Ampify UNLICENSE file for details.
 
 #******************************************************************************\
 #* Copyright (c) 2003-2004, Martin Blais

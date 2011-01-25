@@ -1,5 +1,5 @@
-# Changes to this file by The Ampify Authors are according to the
-# Public Domain license that can be found in the root LICENSE file.
+# Changes to this file by The Ampify Authors are in the Public Domain.
+# See the Ampify UNLICENSE file for details.
 
 # adapted from http://code.activestate.com/recipes/277940/
 # thanks Raymond Hettinger and Paul Cannon!

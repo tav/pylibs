@@ -1,5 +1,5 @@
-# Changes to this file by The Ampify Authors are according to the
-# Public Domain license that can be found in the root LICENSE file.
+# Changes to this file by The Ampify Authors are in the Public Domain.
+# See the Ampify UNLICENSE file for details.
 
 from pygments.lexer import RegexLexer, bygroups
 from pygments.token import (

@@ -1,5 +1,5 @@
-# Changes to this file by The Ampify Authors are according to the
-# Public Domain license that can be found in the root LICENSE file.
+# Changes to this file by The Ampify Authors are in the Public Domain.
+# See the Ampify UNLICENSE file for details.
 
 # Released into the Public Domain by Sander Marechal
 # http://www.jejik.com/articles/2007/02/a_simple_unix_linux_daemon_in_python/
