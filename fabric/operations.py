@@ -12,11 +12,13 @@ import subprocess
 import sys
 import time
 from glob import glob
+from textwrap import dedent
 from traceback import format_exc
+from uuid import uuid4
 
 from contextlib import closing
 
-from fabric.context_managers import settings, char_buffered
+from fabric.context_managers import settings, char_buffered, hide, show
 from fabric.io import output_loop, input_loop
 from fabric.network import needs_host
 from fabric.state import env, connections, output, win32, default_channel
@@ -712,6 +714,29 @@ def run(command, shell=True, pty=True, combine_stderr=True):
         The default value of ``pty`` is now ``True``.
     """
     return _run_command(command, shell, pty, combine_stderr)
+
+
+DEFAULT_SCRIPT_NAME = 'fab.%s' % uuid4()
+
+def run_script(script, name=None, verbose=1, shell=1, pty=1, combine_stderr=1):
+    """Run arbitrary scripts on a remote host."""
+
+    script = dedent(script).strip()
+    if verbose:
+        print "[%s] run: %s" % (env.host, name or script)
+    name = name or DEFAULT_SCRIPT_NAME
+    with hide('running', 'stdout', 'stderr'):
+        run('cat > ' + name + ' << FABEND\n' + script + '\nFABEND\n')
+        run('chmod +x ' + name)
+        try:
+            if verbose > 1:
+                with show('stdout', 'stderr'):
+                    output = run('./' + name, shell, pty, combine_stderr)
+            else:
+                output = run('./' + name)
+        finally:
+            run('rm ' + name)
+    return output
 
 
 @needs_host

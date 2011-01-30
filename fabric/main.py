@@ -100,7 +100,6 @@ def is_task(tup):
         and not name.startswith('_')
     )
 
-
 def load_fabfile(path):
     """
     Import given fabfile path and return (docstring, callables).
@@ -138,7 +137,13 @@ def load_fabfile(path):
         sys.path.insert(index + 1, directory)
         del sys.path[0]
     # Return our two-tuple
-    tasks = dict(filter(is_task, vars(imported).items()))
+    if not api.task.used:
+        tasks = dict(filter(is_task, vars(imported).items()))
+    else:
+        tasks = dict(
+            (var, obj) for var, obj in vars(imported).items()
+            if hasattr(obj, '__fabtask__')
+            )
     return imported.__doc__, tasks
 
 
@@ -240,6 +245,7 @@ def list_commands(docstring):
         else:
             output = name
         print(indent(output))
+    print
     sys.exit(0)
 
 
@@ -330,6 +336,7 @@ def parse_arguments(arguments):
                         kwargs[k] = v
                 else:
                     args.append(k)
+        cmd = cmd.replace('-', '_')
         cmds.append((cmd, args, kwargs, hosts, roles))
     return cmds
 
@@ -434,14 +441,6 @@ def main():
             print("Fabric %s" % state.env.version)
             sys.exit(0)
 
-        # Handle case where we were called bare, i.e. just "fab", and print
-        # a help message.
-        actions = (options.list_commands, options.shortlist, options.display,
-            arguments, remainder_arguments)
-        if not any(actions):
-            parser.print_help()
-            sys.exit(1)
-
         # Load settings from user settings file, into shared env dict.
         state.env.update(load_settings(state.env.rcfile))
 
@@ -461,8 +460,8 @@ def main():
             commands.update(callables)
 
         # Abort if no commands found
-        if not commands and not remainder_arguments:
-            abort("Fabfile didn't contain any commands!")
+        if not arguments and not remainder_arguments:
+            list_commands(docstring)
 
         # Now that we're settled on a fabfile, inform user.
         if state.output.debug:
