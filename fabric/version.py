@@ -6,7 +6,22 @@ problems with ``__init__.py`` (which is loaded by setup.py during installation,
 which in turn needs access to this version information.)
 """
 
-VERSION = (0, 9, 0, "final", 0)
+from subprocess import Popen, PIPE
+from os.path import abspath, dirname
+
+
+def git_sha():
+    loc = abspath(dirname(__file__))
+    p = Popen(
+        "cd \"%s\" && git log -1 --format=format:%%h" % loc,
+        shell=True,
+        stdout=PIPE,
+        stderr=PIPE
+    )
+    return p.communicate()[0]
+
+
+VERSION = (1, 0, 0, 'alpha', 0)
 
 def get_version(form='short'):
     """
@@ -32,6 +47,8 @@ def get_version(form='short'):
     final = (type_ == "final")
     type_num = VERSION[4]
     firsts = "".join([x[0] for x in type_.split()])
+    sha = git_sha()
+    sha1 = (" (%s)" % sha) if sha else ""
 
     # Branch
     versions['branch'] = branch
@@ -44,6 +61,8 @@ def get_version(form='short'):
         v += firsts
         if type_num:
             v += str(type_num)
+        else:
+            v += sha1
     versions['short'] = v
 
     # Normal
@@ -51,9 +70,10 @@ def get_version(form='short'):
     if tertiary:
         v += "." + str(tertiary)
     if not final:
-        v += " " + type_
         if type_num:
-            v += " " + str(type_num)
+            v += " " + type_ + " " + str(type_num)
+        else:
+            v += " pre-" + type_ + sha1
     versions['normal'] = v
 
     # Verbose
@@ -61,9 +81,10 @@ def get_version(form='short'):
     if tertiary:
         v += "." + str(tertiary)
     if not final:
-        v += " " + type_
         if type_num:
-            v += " " + str(type_num)
+            v += " " + type_ + " " + str(type_num)
+        else:
+            v += " pre-" + type_ + sha1
     else:
         v += " final"
     versions['verbose'] = v

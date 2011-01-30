@@ -14,8 +14,11 @@ from fabric.version import get_version
 # Win32 flag
 #
 
-# Impacts a handful of platform specific behaviors.
-win32 = sys.platform in ['win32', 'cygwin']
+# Impacts a handful of platform specific behaviors. Note that Cygwin's Python
+# is actually close enough to "real" UNIXes that it doesn't need (or want!) to
+# use PyWin32 -- so we only test for literal Win32 setups (vanilla Python,
+# ActiveState etc) here.
+win32 = (sys.platform == 'win32')
 
 
 #
@@ -148,9 +151,23 @@ env_options = [
         help="path to SSH private key file. May be repeated."
     ),
 
+    # Use -a here to mirror ssh(1) options.
+    make_option('-a', '--no_agent',
+        action='store_true',
+        default=False,
+        help="don't use the running SSH agent"
+    ),
+
+    # No matching option for ssh(1) so just picked something appropriate.
+    make_option('-k', '--no-keys',
+        action='store_true',
+        default=False,
+        help="don't load private key files from ~/.ssh/"
+    ),
+
     make_option('-f', '--fabfile',
-        default='fabfile.py',
-        help="name of fabfile to load, e.g. 'fabfile.py' or '../other.py'"
+        default='fabfile',
+        help="Python module file to import, e.g. '../other.py'"
     ),
 
     make_option('-w', '--warn-only',
@@ -178,6 +195,14 @@ env_options = [
     make_option('--show',
         metavar='LEVELS',
         help="comma-separated list of output levels to show"
+    ),
+
+    # Global PTY flag for run/sudo
+    make_option('--no-pty',
+        dest='always_use_pty',
+        action='store_false',
+        default=True,
+        help="do not use pseudo-terminal in run/sudo"
     )
     
 ]
@@ -194,18 +219,30 @@ env_options = [
 # preserving DRY: anything in here is generally not settable via the command
 # line.
 env = _AttributeDict({
-    'all_hosts': None, 
+    'again_prompt': 'Sorry, try again.',
+    'all_hosts': [],
+    'combine_stderr': True,
     'command': None,
+    'command_prefixes': [],
     'cwd': '', # Must be empty string, not None, for concatenation purposes
+    'echo_stdin': True,
     'host': None,
     'host_string': None,
+    'local_user': _get_system_username(),
+    'passwords': {},
+    'path': '',
+    'path_behavior': 'append',
     'port': None,
     'real_fabfile': None,
     'roledefs': {},
+    'roledefs': {},
+    # -S so sudo accepts passwd via stdin, -p with our known-value prompt for
+    # later detection (thus %s -- gets filled with env.sudo_prompt at runtime)
+    'sudo_prefix': "sudo -S -p '%s' ",
     'sudo_prompt': 'sudo password:',
     'use_shell': True,
     'user': None,
-    'version': get_version('short'),
+    'version': get_version('short')
 })
 
 # Add in option defaults
@@ -227,6 +264,12 @@ commands = {}
 #
 
 connections = HostConnectionCache()
+
+def default_channel():
+    """
+    Return a channel object based on ``env.host_string``.
+    """
+    return connections[env.host_string].get_transport().open_session()
 
 
 #
@@ -304,9 +347,9 @@ output = _AliasDict({
     'running': True,
     'stdout': True,
     'stderr': True,
-    'debug': False
-
+    'debug': False,
+    'user': True
 }, aliases={
-    'everything': ['warnings', 'running', 'output'],
+    'everything': ['warnings', 'running', 'user', 'output'],
     'output': ['stdout', 'stderr']
 })
