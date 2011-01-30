@@ -222,7 +222,7 @@ def connect(user, host, port):
                 # which one raised the exception. Best not to try.
                 prompt = "[%s] Passphrase for private key"
                 text = prompt % env.host_string
-            password = prompt_for_password(text)
+            password = prompt_for_password(text, user=user)
             # Update env.password, env.passwords if empty
             set_password(password)
         # Ctrl-D / Ctrl-C for exit
@@ -243,7 +243,7 @@ def connect(user, host, port):
                 host, e[1])
             )
 
-def prompt_for_password(prompt=None, no_colon=False, stream=None):
+def prompt_for_password(prompt=None, no_colon=False, stream=None, user=None):
     """
     Prompts for and returns a new password if required; otherwise, returns None.
 
@@ -262,17 +262,20 @@ def prompt_for_password(prompt=None, no_colon=False, stream=None):
     from fabric.state import env
     stream = stream or sys.stderr
     # Construct prompt
-    default = "[%s] Login password" % env.host_string
+    if user:
+        default = "[%s] Login password for user %s" % (env.host_string, user)
+    else:
+        default = "[%s] Login password" % env.host_string
     password_prompt = prompt if (prompt is not None) else default
     if not no_colon:
         password_prompt += ": "
     # Get new password value
     new_password = getpass.getpass(password_prompt, stream)
-    # Otherwise, loop until user gives us a non-empty password (to prevent
-    # returning the empty string, and to avoid unnecessary network overhead.)
+    attempts = 1
     while not new_password:
-        print("Sorry, you can't enter an empty password. Please try again.")
-        password_prompt = base_password_prompt + ": "
+        attempts += 1
+        if attempts > 3:
+            abort("Too many login attempts.")
         new_password = getpass.getpass(password_prompt, stream)
     return new_password
 

@@ -5,10 +5,19 @@ Convenience decorators for use in fabfiles.
 from functools import wraps
 
 
-def task(func):
+def task(func=None, display=True):
     """Decorate an object as being a fabric command task."""
     task.used = 1
+    if func is None:
+        def __task(__func):
+            __func.__fabtask__ = 1
+            if not display:
+                __func.__hide__ = 1
+            return __func
+        return __task
     func.__fabtask__ = 1
+    if not display:
+        func.__hide__ = 1
     return func
 
 task.used = None
@@ -85,6 +94,10 @@ def roles(*role_list):
 
 
 def runs_once(func):
+    print "[warning] the runs_once spelling is deprecated, use run_once instead"
+    return run_once(func)
+
+def run_once(func):
     """
     Decorator preventing wrapped function from running more than once.
 

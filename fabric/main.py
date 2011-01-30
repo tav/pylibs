@@ -10,6 +10,7 @@ to individuals leveraging Fabric as a library, should be kept elsewhere.
 """
 
 from operator import add
+from optcomplete import ListCompleter, autocomplete
 from optparse import OptionParser
 import os
 import sys
@@ -19,7 +20,7 @@ from fabric.contrib import console, files, project # Ditto
 from fabric.network import denormalize, interpret_host_string, disconnect_all
 from fabric import state # For easily-mockable access to roles, env and etc
 from fabric.state import commands, connections, env_options
-from fabric.utils import abort, indent
+from fabric.utils import abort, indent, puts
 
 
 # One-time calculation of "all internal callables" to avoid doing this on every
@@ -29,6 +30,22 @@ _internals = reduce(lambda x, y: x + filter(callable, vars(y).values()),
     _modules,
     []
 )
+
+HOOKS = {}
+
+def hook(hook):
+    def register(func):
+        if hook not in HOOKS:
+            HOOKS[hook] = []
+        HOOKS[hook].append(func)
+        return func
+    return register
+
+def get_hooks(hook):
+    return HOOKS.get(hook, [])
+
+api.get_hooks = get_hooks
+api.hook = hook
 
 def load_settings(path):
     """
@@ -136,7 +153,7 @@ def load_fabfile(path):
     if index is not None:
         sys.path.insert(index + 1, directory)
         del sys.path[0]
-    # Return our two-tuple
+    # Filter down to our two-tuple
     if not api.task.used:
         tasks = dict(filter(is_task, vars(imported).items()))
     else:
@@ -144,8 +161,28 @@ def load_fabfile(path):
             (var, obj) for var, obj in vars(imported).items()
             if hasattr(obj, '__fabtask__')
             )
+    # Support for stages
+    stages = os.environ.get('FAB_STAGES', state.env.get('stages'))
+    if stages:
+        if isinstance(stages, basestring):
+            stages = [stage.strip() for stage in stages.split(',')]
+        state.env.stages = stages
+        for stage in stages:
+            set_env_stage_command(tasks, stage)
     return imported.__doc__, tasks
 
+
+def set_env_stage_command(tasks, stage):
+    def set_stage():
+        """Set the environment to %s.""" % stage
+        puts('[system] environment = %s' % stage)
+        state.env.stage = stage
+    set_stage.__hide__ = 1
+    set_stage.__name__ = stage
+    if stage in tasks:
+        abort("Conflicting environment stage and command name: %r" % stage)
+    tasks[stage] = set_stage
+    return set_stage
 
 def parse_options():
     """
@@ -233,6 +270,9 @@ def list_commands(docstring):
         output = None
         # Print first line of docstring
         func = commands[name]
+        if hasattr(func, '__hide__'):
+            continue
+        name = name.replace('_', '-')
         if func.__doc__:
             lines = filter(None, func.__doc__.splitlines())
             first_line = lines[0].strip()
@@ -246,6 +286,8 @@ def list_commands(docstring):
             output = name
         print(indent(output))
     print
+    for hook in get_hooks('commands.list'):
+        hook()
     sys.exit(0)
 
 
@@ -262,18 +304,20 @@ def display_command(command):
     Print command function's docstring, then exit. Invoked with -d/--display.
     """
     # Sanity check
+    command = command.replace('-', '_')
+    cmd_string = command.replace('_', '-')
     if command not in commands:
-        abort("Command '%s' not found, exiting." % command)
+        abort("Command '%s' not found, exiting." % cmd_string)
     cmd = commands[command]
     # Print out nicely presented docstring if found
     if cmd.__doc__:
-        print("Displaying detailed information for command '%s':" % command)
+        print("Displaying detailed information for command '%s':" % cmd_string)
         print('')
         print(indent(cmd.__doc__, strip=True))
         print('')
     # Or print notice if not
     else:
-        print("No detailed information available for command '%s':" % command)
+        print("No detailed information available for command '%s':" % cmd_string)
     sys.exit(0)
 
 
@@ -459,8 +503,22 @@ def main():
             docstring, callables = load_fabfile(fabfile)
             commands.update(callables)
 
-        # Abort if no commands found
+        autocomplete(
+            parser,
+            ListCompleter(cmd.replace('_', '-') for cmd in commands)
+            )
+
         if not arguments and not remainder_arguments:
+
+            # Non-verbose command list
+            if options.shortlist:
+                shortlist()
+
+            # Handle show (command-specific help) option
+            if options.display:
+                display_command(options.display)
+
+            # Else, show the list of commands and exit
             list_commands(docstring)
 
         # Now that we're settled on a fabfile, inform user.
@@ -469,23 +527,6 @@ def main():
                 print("Using fabfile '%s'" % fabfile)
             else:
                 print("No fabfile loaded -- remainder command only")
-
-        # Non-verbose command list
-        if options.shortlist:
-            shortlist()
-
-        # Handle list-commands option (now that commands are loaded)
-        if options.list_commands:
-            list_commands(docstring)
-
-        # Handle show (command-specific help) option
-        if options.display:
-            display_command(options.display)
-
-        # If user didn't specify any commands to run, show help
-        if not (arguments or remainder_arguments):
-            parser.print_help()
-            sys.exit(0) # Or should it exit with error (1)?
 
         # Parse arguments into commands to run (plus args/kwargs/hosts)
         commands_to_run = parse_arguments(arguments)
@@ -513,6 +554,9 @@ def main():
         if state.output.debug:
             names = ", ".join(x[0] for x in commands_to_run)
             print("Commands to run: %s" % names)
+
+        for hook in get_hooks('exec.before'):
+            hook(commands, commands_to_run)
 
         # At this point all commands must exist, so execute them in order.
         for name, args, kwargs, cli_hosts, cli_roles in commands_to_run:
@@ -554,5 +598,7 @@ def main():
         # we might leave stale threads if we don't explicitly exit()
         sys.exit(1)
     finally:
+        for hook in get_hooks('exec.after'):
+            hook()
         disconnect_all()
     sys.exit(0)
