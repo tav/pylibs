@@ -1,12 +1,10 @@
-from __future__ import with_statement
-
 import sys
+
 from select import select
 
-from fabric.context_managers import settings, char_buffered
-from fabric.state import env, output, win32
 from fabric.auth import get_password, set_password
-import fabric.network
+from fabric.network import prompt_for_password
+from fabric.state import env, output, win32
 
 if win32:
     import msvcrt
@@ -90,7 +88,7 @@ def output_loop(chan, which, capture):
                     # Prompt for, and store, password. Give empty prompt so the
                     # initial display "hides" just after the actually-displayed
                     # prompt from the remote end.
-                    password = fabric.network.prompt_for_password(
+                    password = prompt_for_password(
                         prompt=" ", no_colon=True, stream=pipe
                     )
                     # Update env.password, env.passwords if necessary

@@ -18,18 +18,35 @@ from uuid import uuid4
 
 from contextlib import closing
 
-from fabric.context_managers import settings, char_buffered, hide, show
+from fabric.context_managers import char_buffered, hide, show
 from fabric.io import output_loop, input_loop
-from fabric.network import needs_host
-from fabric.state import env, connections, output, win32, default_channel
-from fabric.utils import abort, indent, warn, puts
+from fabric.network import connections, default_channel, needs_host
 from fabric.thread_handling import ThreadHandler
+from fabric.state import env, output, win32
+from fabric.utils import abort, indent, warn, puts
 
 # For terminal size logic below
 if not win32:
     import fcntl
     import termios
     import struct
+
+
+class ConfigurableBoolean(object):
+    """A configurable boolean value for backwards compatibility."""
+
+    __slots__ = ('state',)
+
+    def __init__(self, state=True):
+        self.state = state
+
+    def __bool__(self):
+        return self.state
+
+    __nonzero__ = __bool__
+
+
+RawDefault = ConfigurableBoolean()
 
 
 def _pty_size():
@@ -615,11 +632,15 @@ def open_shell(command=None):
     _execute(default_channel(), command, True, True, True)
 
 
-def _run_command(command, shell=True, pty=True, combine_stderr=True,
-    sudo=False, user=None):
+def _run_command(
+    command, shell=True, pty=True, combine_stderr=True, sudo=False, user=None,
+    raw=RawDefault
+    ):
     """
     Underpinnings of `run` and `sudo`. See their docstrings for more info.
     """
+    if not raw:
+        command = command.format(**env)
     # Set up new var so original argument can be displayed verbatim later.
     given_command = command
     # Handle context manager modifications, and shell wrapping
@@ -664,7 +685,10 @@ def _run_command(command, shell=True, pty=True, combine_stderr=True,
 
 
 @needs_host
-def run(command, shell=True, pty=True, combine_stderr=True):
+def run(
+    command, shell=True, pty=True, combine_stderr=True, dir=None,
+    raw=RawDefault
+    ):
     """
     Run a shell command on a remote host.
 
@@ -713,12 +737,23 @@ def run(command, shell=True, pty=True, combine_stderr=True):
     .. versionchanged:: 1.0
         The default value of ``pty`` is now ``True``.
     """
-    return _run_command(command, shell, pty, combine_stderr)
+    if dir:
+        _command_prefixes = env.command_prefixes
+        env.command_prefixes += ['cd %s' % dir]
+        try:
+            return _run_command(command, shell, pty, combine_stderr, raw=raw)
+        finally:
+            env.command_prefixes = _command_prefixes
+    return _run_command(command, shell, pty, combine_stderr, raw=raw)
+
 
 
 DEFAULT_SCRIPT_NAME = 'fab.%s' % uuid4()
 
-def run_script(script, name=None, verbose=1, shell=1, pty=1, combine_stderr=1):
+def execute(
+    script, name=None, verbose=True, shell=True, pty=True, combine_stderr=True,
+    dir=None
+    ):
     """Run arbitrary scripts on a remote host."""
 
     script = dedent(script).strip()
@@ -726,21 +761,24 @@ def run_script(script, name=None, verbose=1, shell=1, pty=1, combine_stderr=1):
         print "[%s] run: %s" % (env.host, name or script)
     name = name or DEFAULT_SCRIPT_NAME
     with hide('running', 'stdout', 'stderr'):
-        run('cat > ' + name + ' << FABEND\n' + script + '\nFABEND\n')
-        run('chmod +x ' + name)
+        run('cat > ' + name + ' << FABEND\n' + script + '\nFABEND\n', dir=dir)
+        run('chmod +x ' + name, dir=dir)
         try:
             if verbose > 1:
                 with show('stdout', 'stderr'):
-                    output = run('./' + name, shell, pty, combine_stderr)
+                    output = run('./' + name, shell, pty, combine_stderr, dir)
             else:
-                output = run('./' + name)
+                output = run('./' + name, shell, pty, combine_stderr, dir)
         finally:
-            run('rm ' + name)
+            run('rm ' + name, dir=dir)
     return output
 
 
 @needs_host
-def sudo(command, shell=True, pty=True, combine_stderr=True, user=None):
+def sudo(
+    command, shell=True, pty=True, combine_stderr=True, user=None, dir=None,
+    raw=RawDefault
+    ):
     """
     Run a shell command on a remote host, with superuser privileges.
 
@@ -763,11 +801,22 @@ def sudo(command, shell=True, pty=True, combine_stderr=True, user=None):
     .. versionchanged:: 1.0
         See the changed and added notes for `~fabric.operations.run`.
     """
-    return _run_command(command, shell, pty, combine_stderr, sudo=True,
-        user=user)
+    if dir:
+        _command_prefixes = env.command_prefixes
+        env.command_prefixes += ['cd %s' % dir]
+        try:
+            return _run_command(
+                command, shell, pty, combine_stderr, sudo=True, user=user,
+                raw=raw
+                )
+        finally:
+            env.command_prefixes = _command_prefixes
+    return _run_command(
+        command, shell, pty, combine_stderr, sudo=True, user=user, raw=raw
+        )
 
 
-def local(command, capture=True):
+def local(command, capture=True, dir=None, raw=RawDefault):
     """
     Run a command on the local system.
 
@@ -802,41 +851,49 @@ def local(command, capture=True):
     .. versionchanged:: 1.0
         Added the ``stderr`` attribute.
     """
-    given_command = command
-    # Apply cd(), path() etc
-    wrapped_command = _prefix_commands(_prefix_env_vars(command))
-    if output.debug:
-        print("[localhost] local: %s" % (wrapped_command))
-    elif output.running:
-        print("[localhost] local: " + given_command)
-    # By default, capture both stdout and stderr
-    PIPE = subprocess.PIPE
-    out_stream = PIPE
-    err_stream = PIPE
-    # Tie in to global output controls as best we can; our capture argument
-    # takes precedence over the output settings.
-    if not capture:
-        if output.stdout:
-            out_stream = None
-        if output.stderr:
-            err_stream = None
-    p = subprocess.Popen([wrapped_command], shell=True, stdout=out_stream,
-            stderr=err_stream)
-    (stdout, stderr) = p.communicate()
-    # Handle error condition (deal with stdout being None, too)
-    out = _AttributeString(stdout.strip() if stdout else "")
-    err = _AttributeString(stderr.strip() if stderr else "")
-    out.failed = False
-    out.return_code = p.returncode
-    out.stderr = err
-    if p.returncode != 0:
-        out.failed = True
-        msg = "local() encountered an error (return code %s) while executing '%s'" % (p.returncode, command)
-        _handle_failure(message=msg)
-    out.succeeded = not out.failed
-    # If we were capturing, this will be a string; otherwise it will be None.
-    return out
-
+    if not raw:
+        command = command.format(**env)
+    try:
+        if dir:
+            _command_prefixes = env.command_prefixes
+            env.command_prefixes += ['cd %s' % dir]
+        given_command = command
+        # Apply cd(), path() etc
+        wrapped_command = _prefix_commands(_prefix_env_vars(command))
+        if output.debug:
+            print("[localhost] local: %s" % (wrapped_command))
+        elif output.running:
+            print("[localhost] local: " + given_command)
+        # By default, capture both stdout and stderr
+        PIPE = subprocess.PIPE
+        out_stream = PIPE
+        err_stream = PIPE
+        # Tie in to global output controls as best we can; our capture argument
+        # takes precedence over the output settings.
+        if not capture:
+            if output.stdout:
+                out_stream = None
+            if output.stderr:
+                err_stream = None
+        p = subprocess.Popen([wrapped_command], shell=True, stdout=out_stream,
+                stderr=err_stream)
+        (stdout, stderr) = p.communicate()
+        # Handle error condition (deal with stdout being None, too)
+        out = _AttributeString(stdout.strip() if stdout else "")
+        err = _AttributeString(stderr.strip() if stderr else "")
+        out.failed = False
+        out.return_code = p.returncode
+        out.stderr = err
+        if p.returncode != 0:
+            out.failed = True
+            msg = "local() encountered an error (return code %s) while executing '%s'" % (p.returncode, command)
+            _handle_failure(message=msg)
+        out.succeeded = not out.failed
+        # If we were capturing, this will be a string; otherwise it will be None.
+        return out
+    finally:
+        if dir:
+            env.command_prefixes += _command_prefixes
 
 @needs_host
 def reboot(wait):

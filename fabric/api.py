@@ -6,10 +6,11 @@ anything else inside the package -- like, say, the version number used in
 setup.py -- without triggering loads of most of the code. Which doesn't work so
 well when you're using setup.py to install e.g. paramiko!
 """
-from fabric.context_managers import cd, hide, settings, show, path, prefix
+from fabric.context import failed, succeeded
+from fabric.context_managers import cd, hide, path, prefix, settings, show
 from fabric.decorators import hosts, roles, run_once, runs_once, task
 from fabric.operations import (
-    require, prompt, put, get, run, sudo, local, reboot, open_shell, run_script
+    execute, get, local, open_shell, prompt, put, reboot, require, run, sudo
     )
 from fabric.state import env, output
-from fabric.utils import abort, warn, puts, fastprint
+from fabric.utils import abort, fastprint, puts, warn

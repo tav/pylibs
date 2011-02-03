@@ -9,18 +9,22 @@ The other callables defined in this module are internal only. Anything useful
 to individuals leveraging Fabric as a library, should be kept elsewhere.
 """
 
-from operator import add
-from optcomplete import ListCompleter, autocomplete
-from optparse import OptionParser
 import os
 import sys
 
-from fabric import api # For checking callables against the API
-from fabric.contrib import console, files, project # Ditto
-from fabric.network import denormalize, interpret_host_string, disconnect_all
-from fabric import state # For easily-mockable access to roles, env and etc
-from fabric.state import commands, connections, env_options
+from optcomplete import ListCompleter, autocomplete
+from optparse import OptionParser
+from os.path import dirname, join
+
+from fabric import api
+from fabric.context_managers import settings
+from fabric.contrib import console, files, project
+from fabric.network import interpret_host_string, disconnect_all
+from fabric.operations import RawDefault
+from fabric.state import NullAttributeDict, commands, env, env_options, output
 from fabric.utils import abort, indent, puts
+
+from yaml import safe_load as load_yaml
 
 
 # One-time calculation of "all internal callables" to avoid doing this on every
@@ -46,6 +50,7 @@ def get_hooks(hook):
 
 api.get_hooks = get_hooks
 api.hook = hook
+
 
 def load_settings(path):
     """
@@ -79,7 +84,7 @@ def find_fabfile():
     Usage docs are in docs/usage/fabfiles.rst, in "Fabfile discovery."
     """
     # Obtain env value
-    names = [state.env.fabfile]
+    names = [env.fabfile]
     # Create .py version if necessary
     if not names[0].endswith('.py'):
         names += [names[0] + '.py']
@@ -162,11 +167,11 @@ def load_fabfile(path):
             if hasattr(obj, '__fabtask__')
             )
     # Support for stages
-    stages = os.environ.get('FAB_STAGES', state.env.get('stages'))
+    stages = os.environ.get('FAB_STAGES', env.get('stages'))
     if stages:
         if isinstance(stages, basestring):
             stages = [stage.strip() for stage in stages.split(',')]
-        state.env.stages = stages
+        env.stages = stages
         for stage in stages:
             set_env_stage_command(tasks, stage)
     return imported.__doc__, tasks
@@ -175,14 +180,15 @@ def load_fabfile(path):
 def set_env_stage_command(tasks, stage):
     def set_stage():
         """Set the environment to %s.""" % stage
-        puts('[system] environment = %s' % stage)
-        state.env.stage = stage
+        puts('[system] env.stage = %s' % stage, show_prefix=False)
+        env.stage = stage
     set_stage.__hide__ = 1
     set_stage.__name__ = stage
     if stage in tasks:
         abort("Conflicting environment stage and command name: %r" % stage)
     tasks[stage] = set_stage
     return set_stage
+
 
 def parse_options():
     """
@@ -286,7 +292,13 @@ def list_commands(docstring):
             output = name
         print(indent(output))
     print
-    for hook in get_hooks('commands.list'):
+    if 'stages' in env:
+        print 'Available environments:'
+        print
+        for stage in env.stages:
+            print '    %s' % stage
+        print
+    for hook in get_hooks('listing.display'):
         hook()
     sys.exit(0)
 
@@ -295,7 +307,7 @@ def shortlist():
     """
     Print all task names separated by newlines with no embellishment.
     """
-    print("\n".join(_command_names()))
+    print("\n".join(cmd.replace('_', '-') for cmd  in _command_names()))
     sys.exit(0)
 
 
@@ -355,11 +367,30 @@ def parse_arguments(arguments):
     See docs/usage/fab.rst, section on "per-task arguments" for details.
     """
     cmds = []
+    options = NullAttributeDict()
+    idx = 0
     for cmd in arguments:
         args = []
         kwargs = {}
+        context = None
         hosts = []
         roles = []
+        if cmd.startswith('+'):
+            if ':' in cmd:
+                option, value = cmd[1:].split(':', 1)
+                options[option] = value
+            else:
+                options[cmd[1:]] = True
+            continue
+        elif cmd.startswith(':') and idx:
+            ctx = tuple(filter(None, (x.strip() for x in cmd[1:].split(','))))
+            existing = cmds[idx-1][3]
+            if existing:
+                new = list(existing)
+                new.extend(ctx)
+                ctx = tuple(new)
+            cmds[idx-1][3] = ctx
+            continue
         if ':' in cmd:
             cmd, argstr = cmd.split(':', 1)
             for pair in _escape_split(',', argstr):
@@ -380,9 +411,10 @@ def parse_arguments(arguments):
                         kwargs[k] = v
                 else:
                     args.append(k)
+        idx += 1
         cmd = cmd.replace('-', '_')
-        cmds.append((cmd, args, kwargs, hosts, roles))
-    return cmds
+        cmds.append([cmd, args, kwargs, context, hosts, roles])
+    return cmds, options
 
 
 def parse_remainder(arguments):
@@ -397,7 +429,7 @@ def _merge(hosts, roles):
     Merge given host and role lists into one list of deduped hosts.
     """
     # Abort if any roles don't exist
-    bad_roles = [x for x in roles if x not in state.env.roledefs]
+    bad_roles = [x for x in roles if x not in env.roledefs]
     if bad_roles:
         abort("The following specified roles do not exist:\n%s" % (
             indent(bad_roles)
@@ -406,7 +438,7 @@ def _merge(hosts, roles):
     # Look up roles, turn into flat list of hosts
     role_hosts = []
     for role in roles:
-        value = state.env.roledefs[role]
+        value = env.roledefs[role]
         # Handle "lazy" roles (callables)
         if callable(value):
             value = value()
@@ -434,7 +466,7 @@ def get_hosts(command, cli_hosts, cli_roles):
     # the CLI or from module-level code). This will be the empty list if these
     # have not been set -- which is fine, this method should return an empty
     # list if no hosts have been set anywhere.
-    return _merge(state.env['hosts'], state.env['roles'])
+    return _merge(env['hosts'], env['roles'])
 
 
 def update_output_levels(show, hide):
@@ -448,10 +480,10 @@ def update_output_levels(show, hide):
     """
     if show:
         for key in show.split(','):
-            state.output[key] = True
+            output[key] = True
     if hide:
         for key in hide.split(','):
-            state.output[key] = False
+            output[key] = False
 
 
 def main():
@@ -470,23 +502,23 @@ def main():
         # NOTE: This needs to remain the first thing that occurs
         # post-parsing, since so many things hinge on the values in env.
         for option in env_options:
-            state.env[option.dest] = getattr(options, option.dest)
+            env[option.dest] = getattr(options, option.dest)
 
         # Handle --hosts, --roles (comma separated string => list)
         for key in ['hosts', 'roles']:
-            if key in state.env and isinstance(state.env[key], str):
-                state.env[key] = state.env[key].split(',')
+            if key in env and isinstance(env[key], str):
+                env[key] = env[key].split(',')
 
         # Handle output control level show/hide
         update_output_levels(show=options.show, hide=options.hide)
 
         # Handle version number option
         if options.show_version:
-            print("Fabric %s" % state.env.version)
+            print("Fabric %s" % env.version)
             sys.exit(0)
 
         # Load settings from user settings file, into shared env dict.
-        state.env.update(load_settings(state.env.rcfile))
+        env.update(load_settings(env.rcfile))
 
         # Find local fabfile path or abort
         fabfile = find_fabfile()
@@ -494,7 +526,7 @@ def main():
             abort("Couldn't find any fabfiles!")
 
         # Store absolute path to fabfile in case anyone needs it
-        state.env.real_fabfile = fabfile
+        env.real_fabfile = fabfile
 
         # Load fabfile (which calls its module-level code, including
         # tweaks to env values) and put its commands in the shared commands
@@ -503,10 +535,11 @@ def main():
             docstring, callables = load_fabfile(fabfile)
             commands.update(callables)
 
-        autocomplete(
-            parser,
-            ListCompleter(cmd.replace('_', '-') for cmd in commands)
-            )
+        autocomplete_items = [cmd.replace('_', '-') for cmd in commands]
+        if 'autocomplete' in env:
+            autocomplete_items += env.autocomplete
+
+        autocomplete(parser, ListCompleter(autocomplete_items))
 
         if not arguments and not remainder_arguments:
 
@@ -522,14 +555,15 @@ def main():
             list_commands(docstring)
 
         # Now that we're settled on a fabfile, inform user.
-        if state.output.debug:
+        if output.debug:
             if fabfile:
                 print("Using fabfile '%s'" % fabfile)
             else:
                 print("No fabfile loaded -- remainder command only")
 
         # Parse arguments into commands to run (plus args/kwargs/hosts)
-        commands_to_run = parse_arguments(arguments)
+        commands_to_run, custom_options = parse_arguments(arguments)
+        env.options = custom_options
 
         # Parse remainders into a faux "command" to execute
         remainder_command = parse_remainder(remainder_arguments)
@@ -551,46 +585,77 @@ def main():
             commands[r] = lambda: api.run(remainder_command)
             commands_to_run.append((r, [], {}, [], []))
 
-        if state.output.debug:
+        if output.debug:
             names = ", ".join(x[0] for x in commands_to_run)
             print("Commands to run: %s" % names)
 
         for hook in get_hooks('exec.before'):
             hook(commands, commands_to_run)
 
+        # Initialise the default stage if none are given as the first command.
+        if 'stages' in env:
+            if commands_to_run[0][0] not in env.stages:
+                commands[env.stages[0]]()
+
+        if 'config_file' in env:
+            config_path = join(dirname(fabfile), env.config_file)
+            config_file = open(config_path, 'rb')
+            env.config = config = load_yaml(config_file.read())
+            if (not config) or (not isinstance(config, dict)):
+                abort("Invalid config file found at %s" % config_path)
+            config_file.close()
+
+        for hook in get_hooks('config.loaded'):
+            hook()
+
+        if 'format_commands_by_default' in env:
+            RawDefault.state = not env.format_commands_by_default
+
         # At this point all commands must exist, so execute them in order.
-        for name, args, kwargs, cli_hosts, cli_roles in commands_to_run:
+        for name, args, kwargs, ctx, cli_hosts, cli_roles in commands_to_run:
             # Get callable by itself
             command = commands[name]
             # Set current command name (used for some error messages)
-            state.env.command = name
+            env.command = name
+            # Run with context, if any are specified
+            if not ctx:
+                ctx = getattr(command, '__ctx__', None)
+            if ctx:
+                if getattr(command, '__run_per_context__', None):
+                    for __kwargs in env.get_settings_for_context(ctx):
+                        with settings(ctx=ctx, **__kwargs):
+                            command(*args, **kwargs)
+                else:
+                    with settings(ctx=ctx):
+                        command(*args, **kwargs)
+                continue
             # Set host list (also copy to env)
-            state.env.all_hosts = hosts = get_hosts(
+            env.all_hosts = hosts = get_hosts(
                 command, cli_hosts, cli_roles)
             # If hosts found, execute the function on each host in turn
             for host in hosts:
                 # Preserve user
-                prev_user = state.env.user
+                prev_user = env.user
                 # Split host string and apply to env dict
-                username, hostname, port = interpret_host_string(host)
+                interpret_host_string(host)
                 # Log to stdout
-                if state.output.running:
+                if output.running:
                     print("[%s] Executing task '%s'" % (host, name))
                 # Actually run command
-                commands[name](*args, **kwargs)
+                command(*args, **kwargs)
                 # Put old user back
-                state.env.user = prev_user
+                env.user = prev_user
             # If no hosts found, assume local-only and run once
             if not hosts:
-                commands[name](*args, **kwargs)
+                command(*args, **kwargs)
         # If we got here, no errors occurred, so print a final note.
-        if state.output.status:
+        if output.status:
             print("\nDone.")
     except SystemExit:
         # a number of internal functions might raise this one.
         raise
     except KeyboardInterrupt:
-        if state.output.status:
+        if output.status:
             print >> sys.stderr, "\nStopped."
         sys.exit(1)
     except:

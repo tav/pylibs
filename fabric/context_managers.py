@@ -7,9 +7,9 @@ Context managers for use with the ``with`` statement.
     Python 2.6+.)
 """
 
-from contextlib import contextmanager, nested
 import sys
 
+from contextlib import contextmanager, nested
 from fabric.state import env, output, win32
 
 if not win32:
@@ -86,7 +86,8 @@ def _setenv(**kwargs):
     """
     previous = {}
     for key, value in kwargs.iteritems():
-        previous[key] = env[key]
+        if key in env:
+            previous[key] = env[key]
         env[key] = value
     try:
         yield
@@ -292,7 +293,9 @@ def char_buffered(pipe):
 
     Only applies on Unix-based systems; on Windows this is a no-op.
     """
-    if win32 or not sys.stdin.isatty():
+    if 'disable_char_buffering' in env and env.disable_char_buffering:
+        yield
+    elif win32 or not sys.stdin.isatty():
         yield
     else:
         old_settings = termios.tcgetattr(pipe)

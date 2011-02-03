@@ -6,6 +6,8 @@ or performing indenting on multiline output.
 import sys
 import textwrap
 
+from fabric.state import env, output
+
 
 def abort(msg):
     """
@@ -18,7 +20,6 @@ def abort(msg):
     .. _sys.exit: http://docs.python.org/library/sys.html#sys.exit
     .. _SystemExit: http://docs.python.org/library/exceptions.html#exceptions.SystemExit
     """
-    from fabric.state import output
     if output.aborts:
         print >> sys.stderr, "\nFatal error: " + str(msg)
         print >> sys.stderr, "\nAborting."
@@ -34,7 +35,6 @@ def warn(msg):
     provided that the ``warnings`` output level (which is active by default) is
     turned on.
     """
-    from fabric.state import output
     if output.warnings:
         print >> sys.stderr, "\nWarning: %s\n" % msg
 
@@ -88,7 +88,6 @@ def puts(text, show_prefix=True, end="\n", flush=False):
     .. versionadded:: 0.9.2
     .. seealso:: `~fabric.utils.fastprint`
     """
-    from fabric.state import output, env
     if output.user:
         prefix = ""
         if env.host_string and show_prefix:
