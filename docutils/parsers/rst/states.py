@@ -1553,7 +1553,10 @@ class Body(RSTState):
 
     def nest_line_block_lines(self, block):
         for index in range(1, len(block)):
-            if block[index].indent is None:
+            # tav -- the indent attribute isn't always set
+            # if block[index].indent is None:
+            if ((not hasattr(block[index], 'indent'))
+                or block[index].indent is None):
                 block[index].indent = block[index - 1].indent
         self.nest_line_block_segment(block)
 
