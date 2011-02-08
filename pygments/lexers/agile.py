@@ -73,7 +73,7 @@ class PythonLexer(RegexLexer):
         'keywords': [
             (r'(assert|break|continue|del|elif|else|except|exec|'
              r'finally|for|global|if|lambda|pass|print|raise|'
-             r'return|try|while|yield|as|with)\b', Keyword),
+             r'return|try|while|yield|as|with|using|do)\b', Keyword),
         ],
         'builtins': [
             (r'(?<!\.)(__import__|abs|all|any|apply|basestring|bin|bool|buffer|'
