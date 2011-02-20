@@ -341,10 +341,20 @@ def disconnect_all():
     library users.
     """
     # Explicitly disconnect from all servers
+    if env.colors:
+        color = env.color_settings['finish']
+    else:
+        color = None
     for key in connections.keys():
         if output.status:
-            print "Disconnecting from %s..." % denormalize(key),
+            msg = "Disconnecting from %s..." % denormalize(key)
+            if color:
+                msg = color(msg)
+            print msg,
         connections[key].close()
         del connections[key]
         if output.status:
-            print "done."
+            if color:
+                print color("done.")
+            else:
+                print "done."

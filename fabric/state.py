@@ -7,6 +7,7 @@ import sys
 
 from optparse import make_option
 
+from fabric.colors import blue, cyan, green, red, yellow
 from fabric.version import get_version
 
 
@@ -38,14 +39,6 @@ class AttributeDict(dict):
         >>> m['foo']
         'not bar'
 
-    ``AttributeDict`` objects also provide ``.first()`` which acts like
-    ``.get()`` but accepts multiple keys as arguments, and returns the value of
-    the first hit, e.g.::
-
-        >>> m = AttributeDict({'foo': 'bar', 'biz': 'baz'})
-        >>> m.first('wrong', 'incorrect', 'foo', 'biz')
-        'bar'
-
     """
     def __getattr__(self, key):
         try:
@@ -57,39 +50,31 @@ class AttributeDict(dict):
     def __setattr__(self, key, value):
         self[key] = value
 
-    def first(self, *names):
-        for name in names:
-            value = self.get(name)
-            if value:
-                return value
-
-
-class NullAttributeDict(dict):
-    """Like AttributeDict, but returns None for non-existent values."""
-
-    def __getattr__(self, key):
-        try:
-            return self[key]
-        except KeyError:
-            return None
-
-    def __setattr__(self, key, value):
-        self[key] = value
-
 
 class _EnvDict(AttributeDict):
     """Environment dictionary object."""
+
+    def __getattr__(self, key):
+        if key.isupper():
+            dct = self.__dict__
+            if '_env_mgr' not in dct:
+                from fabric.context_managers import EnvManager
+                dct['_env_mgr'] = EnvManager
+            return dct['_env_mgr'].for_var(key)
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(key)
+
     def __call__(self, *args, **kwargs):
-        if '_ctx_class' not in self:
-            if 'get_settings_for_context' not in env:
-                from fabric.utils import abort
-                abort(
-                    "You must define env.get_settings_for_context to "
-                    "use contexts."
-                    )
+        dct = self.__dict__
+        if '_ctx_class' not in dct:
+            if 'get_settings' not in env:
+                from fabric.contrib.tav import get_settings
+                env.get_settings = get_settings
             from fabric.context import ContextRunner
-            self['_ctx_class'] = ContextRunner
-        return self['_ctx_class'](*args, **kwargs)
+            dct['_ctx_class'] = ContextRunner
+        return dct['_ctx_class'](*args, **kwargs)
 
 
 # By default, if the user (including code using Fabric as a library) doesn't
@@ -249,12 +234,26 @@ env_options = [
 env = _EnvDict({
     'again_prompt': 'Sorry, try again.',
     'all_hosts': [],
+    'colors': False,
+    'color_settings': {
+        'abort': yellow,
+        'error': yellow,
+        'finish': cyan,
+        'host_prefix': green,
+        'prefix': red,
+        'prompt': blue,
+        'task': red,
+        'warn': yellow
+        },
     'combine_stderr': True,
     'command': None,
     'command_prefixes': [],
-    'ctx': None,
+    'config_file': None,
+    'ctx': (),
     'cwd': '', # Must be empty string, not None, for concatenation purposes
     'echo_stdin': True,
+    'format': False,
+    'hook': None,
     'host': None,
     'host_string': None,
     'local_user': _get_system_username(),
@@ -266,6 +265,7 @@ env = _EnvDict({
     'port': None,
     'real_fabfile': None,
     'roledefs': {},
+    'shell_history_file': '~/.fab-shell-history',
     'state': None,
     # -S so sudo accepts passwd via stdin, -p with our known-value prompt for
     # later detection (thus %s -- gets filled with env.sudo_prompt at runtime)

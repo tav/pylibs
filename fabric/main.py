@@ -12,16 +12,16 @@ to individuals leveraging Fabric as a library, should be kept elsewhere.
 import os
 import sys
 
+from fnmatch import fnmatch
 from optcomplete import ListCompleter, autocomplete
 from optparse import OptionParser
-from os.path import dirname, join
+from os.path import dirname, expanduser, join, realpath
 
 from fabric import api
 from fabric.context_managers import settings
 from fabric.contrib import console, files, project
 from fabric.network import interpret_host_string, disconnect_all
-from fabric.operations import RawDefault
-from fabric.state import NullAttributeDict, commands, env, env_options, output
+from fabric.state import AttributeDict, commands, env, env_options, output
 from fabric.utils import abort, indent, puts
 
 from yaml import safe_load as load_yaml
@@ -36,20 +36,49 @@ _internals = reduce(lambda x, y: x + filter(callable, vars(y).values()),
 )
 
 HOOKS = {}
+DISABLED_HOOKS = []
+ENABLED_HOOKS = []
 
-def hook(hook):
+
+def hook(*names):
     def register(func):
-        if hook not in HOOKS:
-            HOOKS[hook] = []
-        HOOKS[hook].append(func)
+        for name in names:
+            name = name.replace('_', '-')
+            if name not in HOOKS:
+                HOOKS[name] = []
+            HOOKS[name].append(func)
         return func
     return register
 
-def get_hooks(hook):
-    return HOOKS.get(hook, [])
 
-api.get_hooks = get_hooks
+def get_hooks(name, disabled=False):
+    name = name.replace('_', '-')
+    for pattern in DISABLED_HOOKS:
+        if fnmatch(name, pattern):
+            disabled = 1
+    for pattern in ENABLED_HOOKS:
+        if fnmatch(name, pattern):
+            disabled = 0
+    if disabled:
+        return []
+    return HOOKS.get(name, [])
+
+
+def call_hooks(name, *args, **kwargs):
+    name = name.replace('_', '-')
+    prev_hook = env.hook
+    env.hook = name
+    try:
+        for hook in get_hooks(name):
+            hook(*args, **kwargs)
+    finally:
+        env.hook = prev_hook
+
+
 api.hook = hook
+hook.get = get_hooks
+hook.call = call_hooks
+hook.registry = HOOKS
 
 
 def load_settings(path):
@@ -178,14 +207,22 @@ def load_fabfile(path):
 
 
 def set_env_stage_command(tasks, stage):
+    if stage in tasks:
+        return
     def set_stage():
         """Set the environment to %s.""" % stage
-        puts('[system] env.stage = %s' % stage, show_prefix=False)
+        puts('env.stage = %s' % stage, 'system')
         env.stage = stage
+        config_file = env.config_file
+        if config_file:
+            if not isinstance(config_file, basestring):
+                config_file = '%s.yaml'
+            try:
+                env.config_file = config_file % stage
+            except TypeError:
+                env.config_file = config_file
     set_stage.__hide__ = 1
     set_stage.__name__ = stage
-    if stage in tasks:
-        abort("Conflicting environment stage and command name: %r" % stage)
     tasks[stage] = set_stage
     return set_stage
 
@@ -237,6 +274,17 @@ def parse_options():
         metavar='COMMAND',
         help="print detailed info about a given command and exit"
     )
+
+    # Hooks related options
+    parser.add_option(
+        '--disable-hooks', metavar='PATTERNS',
+        help="disable all matching hooks"
+        )
+
+    parser.add_option(
+        '--enable-hooks', metavar='PATTERNS',
+        help="enable all matching hooks (overrides --disable-hooks)"
+        )
 
     #
     # Add in options which are also destined to show up as `env` vars.
@@ -298,8 +346,7 @@ def list_commands(docstring):
         for stage in env.stages:
             print '    %s' % stage
         print
-    for hook in get_hooks('listing.display'):
-        hook()
+    call_hooks('listing.display')
     sys.exit(0)
 
 
@@ -367,7 +414,7 @@ def parse_arguments(arguments):
     See docs/usage/fab.rst, section on "per-task arguments" for details.
     """
     cmds = []
-    options = NullAttributeDict()
+    env_update = {}
     idx = 0
     for cmd in arguments:
         args = []
@@ -377,13 +424,13 @@ def parse_arguments(arguments):
         roles = []
         if cmd.startswith('+'):
             if ':' in cmd:
-                option, value = cmd[1:].split(':', 1)
-                options[option] = value
+                name, value = cmd[1:].split(':', 1)
+                env_update[name] = value
             else:
-                options[cmd[1:]] = True
+                env_update[cmd[1:]] = True
             continue
-        elif cmd.startswith(':') and idx:
-            ctx = tuple(filter(None, (x.strip() for x in cmd[1:].split(','))))
+        elif cmd.startswith('@') and idx:
+            ctx = (cmd[1:],)
             existing = cmds[idx-1][3]
             if existing:
                 new = list(existing)
@@ -414,7 +461,7 @@ def parse_arguments(arguments):
         idx += 1
         cmd = cmd.replace('-', '_')
         cmds.append([cmd, args, kwargs, context, hosts, roles])
-    return cmds, options
+    return cmds, env_update
 
 
 def parse_remainder(arguments):
@@ -535,12 +582,26 @@ def main():
             docstring, callables = load_fabfile(fabfile)
             commands.update(callables)
 
+        # Autocompletion support
         autocomplete_items = [cmd.replace('_', '-') for cmd in commands]
         if 'autocomplete' in env:
             autocomplete_items += env.autocomplete
 
         autocomplete(parser, ListCompleter(autocomplete_items))
 
+        # Handle hooks related options
+        _disable_hooks = options.disable_hooks
+        _enable_hooks = options.enable_hooks
+
+        if _disable_hooks:
+            for _hook in _disable_hooks.strip().split():
+                DISABLED_HOOKS.append(_hook.strip())
+
+        if _enable_hooks:
+            for _hook in _enable_hooks.strip().split():
+                ENABLED_HOOKS.append(_hook.strip())
+
+        # Handle the non-execution flow
         if not arguments and not remainder_arguments:
 
             # Non-verbose command list
@@ -562,8 +623,8 @@ def main():
                 print("No fabfile loaded -- remainder command only")
 
         # Parse arguments into commands to run (plus args/kwargs/hosts)
-        commands_to_run, custom_options = parse_arguments(arguments)
-        env.options = custom_options
+        commands_to_run, env_update = parse_arguments(arguments)
+        env.update(env_update)
 
         # Parse remainders into a faux "command" to execute
         remainder_command = parse_remainder(remainder_arguments)
@@ -589,27 +650,28 @@ def main():
             names = ", ".join(x[0] for x in commands_to_run)
             print("Commands to run: %s" % names)
 
-        for hook in get_hooks('exec.before'):
-            hook(commands, commands_to_run)
+        call_hooks('commands.before', commands, commands_to_run)
+
+        # Initialse context runner
+        env()
 
         # Initialise the default stage if none are given as the first command.
         if 'stages' in env:
             if commands_to_run[0][0] not in env.stages:
                 commands[env.stages[0]]()
 
-        if 'config_file' in env:
-            config_path = join(dirname(fabfile), env.config_file)
+        if env.config_file:
+            config_path = realpath(expanduser(env.config_file))
+            config_path = join(dirname(fabfile), config_path)
             config_file = open(config_path, 'rb')
-            env.config = config = load_yaml(config_file.read())
+            config = load_yaml(config_file.read())
             if (not config) or (not isinstance(config, dict)):
                 abort("Invalid config file found at %s" % config_path)
+            env.config = AttributeDict(config)
             config_file.close()
 
-        for hook in get_hooks('config.loaded'):
-            hook()
-
-        if 'format_commands_by_default' in env:
-            RawDefault.state = not env.format_commands_by_default
+        call_hooks('config.loaded')
+        first_time_env_call = 1
 
         # At this point all commands must exist, so execute them in order.
         for name, args, kwargs, ctx, cli_hosts, cli_roles in commands_to_run:
@@ -621,13 +683,8 @@ def main():
             if not ctx:
                 ctx = getattr(command, '__ctx__', None)
             if ctx:
-                if getattr(command, '__run_per_context__', None):
-                    for __kwargs in env.get_settings_for_context(ctx):
-                        with settings(ctx=ctx, **__kwargs):
-                            command(*args, **kwargs)
-                else:
-                    with settings(ctx=ctx):
-                        command(*args, **kwargs)
+                with settings(ctx=ctx):
+                    command(*args, **kwargs)
                 continue
             # Set host list (also copy to env)
             env.all_hosts = hosts = get_hosts(
@@ -640,7 +697,10 @@ def main():
                 interpret_host_string(host)
                 # Log to stdout
                 if output.running:
-                    print("[%s] Executing task '%s'" % (host, name))
+                    msg = "[%s] Executing task '%s'" % (host, name)
+                    if env.colors:
+                        msg = env.color_settings['task'](msg)
+                    print(msg)
                 # Actually run command
                 command(*args, **kwargs)
                 # Put old user back
@@ -650,20 +710,25 @@ def main():
                 command(*args, **kwargs)
         # If we got here, no errors occurred, so print a final note.
         if output.status:
-            print("\nDone.")
+            msg = "\nDone."
+            if env.colors:
+                msg = env.color_settings['finish'](msg)
+            print(msg)
     except SystemExit:
         # a number of internal functions might raise this one.
         raise
     except KeyboardInterrupt:
         if output.status:
-            print >> sys.stderr, "\nStopped."
+            msg = "\nStopped."
+            if env.colors:
+                msg = env.color_settings['finish'](msg)
+            print >> sys.stderr, msg
         sys.exit(1)
     except:
         sys.excepthook(*sys.exc_info())
         # we might leave stale threads if we don't explicitly exit()
         sys.exit(1)
     finally:
-        for hook in get_hooks('exec.after'):
-            hook()
+        call_hooks('commands.after')
         disconnect_all()
     sys.exit(0)

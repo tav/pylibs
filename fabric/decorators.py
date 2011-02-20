@@ -3,18 +3,17 @@ Convenience decorators for use in fabfiles.
 """
 
 from functools import wraps
+from fabric.utils import warn
 
 
 def task(*args, **kwargs):
     """Decorate an object as being a fabric command task."""
     task.used = 1
     display = kwargs.get('display', 1)
-    run_per_context = kwargs.get('run_per_context', 1)
     if args:
         if hasattr(args[0], '__call__'):
             func = args[0]
             func.__fabtask__ = 1
-            func.__run_per_context__ = run_per_context
             if not display:
                 func.__hide__ = 1
             return func
@@ -26,7 +25,6 @@ def task(*args, **kwargs):
     def __task(__func):
         __func.__ctx__ = ctx
         __func.__fabtask__ = 1
-        __func.__run_per_context__ = run_per_context
         if not display:
             __func.__hide__ = 1
         return __func
@@ -106,7 +104,7 @@ def roles(*role_list):
 
 
 def runs_once(func):
-    print "[warning] the runs_once spelling is deprecated, use run_once instead"
+    warn("The runs_once spelling is deprecated, use run_once instead.")
     return run_once(func)
 
 def run_once(func):

@@ -30,6 +30,9 @@ def output_loop(chan, which, capture):
     else:
         prefix = "err"
         pipe = sys.stderr
+    host_prefix = "[%s]" % env.host_string
+    if env.colors:
+        host_prefix = env.color_settings['host_prefix'](host_prefix)
     printing = getattr(output, 'stdout' if (which == 'recv') else 'stderr')
     # Initialize loop variables
     reprompt = False
@@ -48,7 +51,7 @@ def output_loop(chan, which, capture):
         # Otherwise, we're in run/sudo and need to handle capturing and
         # prompts.
         else:
-            _prefix = "[%s] %s: " % (env.host_string, prefix)
+            _prefix = "%s %s: " % (host_prefix, prefix)
             # Print to user
             if printing:
                 # Initial prefix

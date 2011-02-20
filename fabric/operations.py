@@ -11,19 +11,19 @@ import stat
 import subprocess
 import sys
 import time
+
+from contextlib import closing
 from glob import glob
 from textwrap import dedent
 from traceback import format_exc
 from uuid import uuid4
 
-from contextlib import closing
-
-from fabric.context_managers import char_buffered, hide, show
+from fabric.context_managers import char_buffered, hide, show, stringify_env_var
 from fabric.io import output_loop, input_loop
 from fabric.network import connections, default_channel, needs_host
 from fabric.thread_handling import ThreadHandler
 from fabric.state import env, output, win32
-from fabric.utils import abort, indent, warn, puts
+from fabric.utils import abort, indent, fastprint, warn
 
 # For terminal size logic below
 if not win32:
@@ -32,21 +32,7 @@ if not win32:
     import struct
 
 
-class ConfigurableBoolean(object):
-    """A configurable boolean value for backwards compatibility."""
-
-    __slots__ = ('state',)
-
-    def __init__(self, state=True):
-        self.state = state
-
-    def __bool__(self):
-        return self.state
-
-    __nonzero__ = __bool__
-
-
-RawDefault = ConfigurableBoolean()
+Blank = object()
 
 
 def _pty_size():
@@ -251,7 +237,9 @@ def prompt(text, key=None, default='', validate=None):
     else:
         default_str = " "
     # Construct full prompt string
-    prompt_str = text.strip() + default_str
+    prompt_str = '\n' + text.strip() + default_str
+    if env.colors:
+        prompt_str = env.color_settings['prompt'](prompt_str)
     # Loop until we pass validation
     value = None
     while value is None:
@@ -268,8 +256,13 @@ def prompt(text, key=None, default='', validate=None):
                 except Exception, e:
                     # Reset value so we stay in the loop
                     value = None
-                    print("Validation failed for the following reason:")
-                    print(indent(e.message) + "\n")
+                    msg = (
+                        "Validation failed for the following reason:\n%s"
+                        % indent(e.message)
+                        )
+                    if env.colors:
+                        msg = env.color_settings['error'](msg)
+                    print(msg)
             # String / regex must match and will be empty if validation fails.
             else:
                 # Need to transform regex into full-matching one if it's not.
@@ -279,7 +272,13 @@ def prompt(text, key=None, default='', validate=None):
                     validate += r'$'
                 result = re.findall(validate, value)
                 if not result:
-                    print("Regular expression validation failed: '%s' does not match '%s'\n" % (value, validate))
+                    msg = (
+                        "Regular expression validation failed: '%s' does not match '%s'"
+                        % (value, validate)
+                        )
+                    if env.colors:
+                        msg = env.color_settings['error'](msg)
+                    print(msg)
                     # Reset value so we stay in the loop
                     value = None
     # At this point, value must be valid, so update env if necessary
@@ -290,6 +289,8 @@ def prompt(text, key=None, default='', validate=None):
         warn("overwrote previous env variable '%s'; used to be '%s', is now '%s'." % (
             key, previous_value, value
         ))
+    else:
+        print
     # And return the value, too, just in case someone finds that useful.
     return value
 
@@ -349,9 +350,11 @@ def put(local_path, remote_path, mode=None):
                 )
             # Print
             if output.running:
-                print("[%s] put: %s -> %s" % (
-                    env.host_string, lpath, _remote_path
-                ))
+                prefix = "[%s] " % env.host_string
+                msg = "put: %s -> %s" % (lpath, _remote_path)
+                if env.colors:
+                    prefix = env.color_settings['host_prefix'](prefix)
+                print(prefix + msg)
             # Try to catch raised exceptions (which is the only way to tell if
             # this operation had problems; there's no return code) during upload
             try:
@@ -417,9 +420,11 @@ def get(remote_path, local_path):
             local_path = local_path + '.' + env.host
         # Print
         if output.running:
-            print("[%s] download: %s <- %s" % (
-                env.host_string, local_path, remote_path
-            ))
+            prefix = "[%s] " % env.host_string
+            msg = "download: %s <- %s" % (local_path, remote_path)
+            if env.colors:
+                prefix = env.color_settings['host_prefix'](msg)
+            print(prefix + msg)
         # Handle any raised exceptions (no return code to inspect here)
         try:
             ftp.get(remote_path, local_path)
@@ -465,7 +470,7 @@ def _shell_wrap(command, shell=True, sudo_prefix=None):
     return sudo_prefix + shell + command
 
 
-def _prefix_commands(command):
+def _prefix_commands(command, dir=None):
     """
     Prefixes ``command`` with all prefixes found in ``env.command_prefixes``.
 
@@ -482,6 +487,9 @@ def _prefix_commands(command):
     # string or lack thereof.
     # Also place it at the front of the list, in case user is expecting another
     # prefixed command to be "in" the current working directory.
+    if dir:
+        dir = dir.replace(' ', r'\ ')
+        prefixes.append('cd %s' % dir)
     if env.cwd:
         prefixes.insert(0, 'cd %s' % env.cwd)
     glue = " && "
@@ -489,7 +497,7 @@ def _prefix_commands(command):
     return prefix + command
 
 
-def _prefix_env_vars(command):
+def _prefix_env_vars(command, stringify_env_var=stringify_env_var):
     """
     Prefixes ``command`` with any shell environment vars, e.g. ``PATH=foo ``.
 
@@ -500,13 +508,20 @@ def _prefix_env_vars(command):
     path = env.path
     if path:
         if env.path_behavior == 'append':
-            path = 'PATH=$PATH:\"%s\" ' % path
+            path = 'export PATH=$PATH:\"%s\" && ' % path
         elif env.path_behavior == 'prepend':
-            path = 'PATH=\"%s\":$PATH ' % path
+            path = 'export PATH=\"%s\":$PATH && ' % path
         elif env.path_behavior == 'replace':
-            path = 'PATH=\"%s\" ' % path
+            path = 'export PATH=\"%s\" && ' % path
     else:
         path = ''
+    env_vars = [
+        'export %s' % stringify_env_var(key[1:])
+        for key in env if key.startswith('$')
+        ]
+    if env_vars:
+        print ' && '.join(env_vars) + ' && ' + path + command
+        return ' && '.join(env_vars) + ' && ' + path + command
     return path + command
 
 
@@ -634,27 +649,32 @@ def open_shell(command=None):
 
 def _run_command(
     command, shell=True, pty=True, combine_stderr=True, sudo=False, user=None,
-    raw=RawDefault
+    dir=None, format=Blank
     ):
     """
     Underpinnings of `run` and `sudo`. See their docstrings for more info.
     """
-    if not raw:
+    if format is Blank:
+        format = env.format
+    if format:
         command = command.format(**env)
     # Set up new var so original argument can be displayed verbatim later.
     given_command = command
     # Handle context manager modifications, and shell wrapping
     wrapped_command = _shell_wrap(
-        _prefix_commands(_prefix_env_vars(command)),
+        _prefix_env_vars(_prefix_commands(command, dir)),
         shell,
         _sudo_prefix(user) if sudo else None
     )
     # Execute info line
     which = 'sudo' if sudo else 'run'
+    prefix = "[%s]" % env.host_string
+    if env.colors:
+        prefix = env.color_settings['host_prefix'](prefix)
     if output.debug:
-        print("[%s] %s: %s" % (env.host_string, which, wrapped_command))
+        print("%s %s: %s" % (prefix, which, wrapped_command))
     elif output.running:
-        print("[%s] %s: %s" % (env.host_string, which, given_command))
+        print("%s %s: %s" % (prefix, which, given_command))
 
     # Actual execution, stdin/stdout/stderr handling, and termination
     stdout, stderr, status = _execute(default_channel(), wrapped_command, pty,
@@ -687,7 +707,7 @@ def _run_command(
 @needs_host
 def run(
     command, shell=True, pty=True, combine_stderr=True, dir=None,
-    raw=RawDefault
+    format=Blank
     ):
     """
     Run a shell command on a remote host.
@@ -736,16 +756,10 @@ def run(
 
     .. versionchanged:: 1.0
         The default value of ``pty`` is now ``True``.
-    """
-    if dir:
-        _command_prefixes = env.command_prefixes
-        env.command_prefixes += ['cd %s' % dir]
-        try:
-            return _run_command(command, shell, pty, combine_stderr, raw=raw)
-        finally:
-            env.command_prefixes = _command_prefixes
-    return _run_command(command, shell, pty, combine_stderr, raw=raw)
-
+    """ # emacs "
+    return _run_command(
+        command, shell, pty, combine_stderr, dir=dir, format=format
+        )
 
 
 DEFAULT_SCRIPT_NAME = 'fab.%s' % uuid4()
@@ -758,7 +772,10 @@ def execute(
 
     script = dedent(script).strip()
     if verbose:
-        print "[%s] run: %s" % (env.host, name or script)
+        prefix = "[%s]" % env.host_string
+        if env.colors:
+            prefix = env.color_settings['host_prefix'](prefix)
+        print("%s run: %s" % (prefix, name or script))
     name = name or DEFAULT_SCRIPT_NAME
     with hide('running', 'stdout', 'stderr'):
         run('cat > ' + name + ' << FABEND\n' + script + '\nFABEND\n', dir=dir)
@@ -777,7 +794,7 @@ def execute(
 @needs_host
 def sudo(
     command, shell=True, pty=True, combine_stderr=True, user=None, dir=None,
-    raw=RawDefault
+    format=Blank
     ):
     """
     Run a shell command on a remote host, with superuser privileges.
@@ -801,22 +818,13 @@ def sudo(
     .. versionchanged:: 1.0
         See the changed and added notes for `~fabric.operations.run`.
     """
-    if dir:
-        _command_prefixes = env.command_prefixes
-        env.command_prefixes += ['cd %s' % dir]
-        try:
-            return _run_command(
-                command, shell, pty, combine_stderr, sudo=True, user=user,
-                raw=raw
-                )
-        finally:
-            env.command_prefixes = _command_prefixes
     return _run_command(
-        command, shell, pty, combine_stderr, sudo=True, user=user, raw=raw
+        command, shell, pty, combine_stderr, sudo=True, user=user,
+        dir=dir, format=format
         )
 
 
-def local(command, capture=True, dir=None, raw=RawDefault):
+def local(command, capture=True, dir=None, format=Blank):
     """
     Run a command on the local system.
 
@@ -851,49 +859,47 @@ def local(command, capture=True, dir=None, raw=RawDefault):
     .. versionchanged:: 1.0
         Added the ``stderr`` attribute.
     """
-    if not raw:
+    if format is Blank:
+        format = env.format
+    if format:
         command = command.format(**env)
-    try:
-        if dir:
-            _command_prefixes = env.command_prefixes
-            env.command_prefixes += ['cd %s' % dir]
-        given_command = command
-        # Apply cd(), path() etc
-        wrapped_command = _prefix_commands(_prefix_env_vars(command))
-        if output.debug:
-            print("[localhost] local: %s" % (wrapped_command))
-        elif output.running:
-            print("[localhost] local: " + given_command)
-        # By default, capture both stdout and stderr
-        PIPE = subprocess.PIPE
-        out_stream = PIPE
-        err_stream = PIPE
-        # Tie in to global output controls as best we can; our capture argument
-        # takes precedence over the output settings.
-        if not capture:
-            if output.stdout:
-                out_stream = None
-            if output.stderr:
-                err_stream = None
-        p = subprocess.Popen([wrapped_command], shell=True, stdout=out_stream,
-                stderr=err_stream)
-        (stdout, stderr) = p.communicate()
-        # Handle error condition (deal with stdout being None, too)
-        out = _AttributeString(stdout.strip() if stdout else "")
-        err = _AttributeString(stderr.strip() if stderr else "")
-        out.failed = False
-        out.return_code = p.returncode
-        out.stderr = err
-        if p.returncode != 0:
-            out.failed = True
-            msg = "local() encountered an error (return code %s) while executing '%s'" % (p.returncode, command)
-            _handle_failure(message=msg)
-        out.succeeded = not out.failed
-        # If we were capturing, this will be a string; otherwise it will be None.
-        return out
-    finally:
-        if dir:
-            env.command_prefixes += _command_prefixes
+    given_command = command
+    # Apply cd(), path() etc
+    wrapped_command = _prefix_env_vars(_prefix_commands(command, dir))
+    prefix = '[localhost] '
+    if env.colors:
+        prefix = env.color_settings['host_prefix'](prefix)
+    if output.debug:
+        print(prefix + ("local: %s" % (wrapped_command)))
+    elif output.running:
+        print(prefix + "local: " + given_command)
+    # By default, capture both stdout and stderr
+    PIPE = subprocess.PIPE
+    out_stream = PIPE
+    err_stream = PIPE
+    # Tie in to global output controls as best we can; our capture argument
+    # takes precedence over the output settings.
+    if not capture:
+        if output.stdout:
+            out_stream = None
+        if output.stderr:
+            err_stream = None
+    p = subprocess.Popen([wrapped_command], shell=True, stdout=out_stream,
+            stderr=err_stream)
+    (stdout, stderr) = p.communicate()
+    # Handle error condition (deal with stdout being None, too)
+    out = _AttributeString(stdout.strip() if stdout else "")
+    err = _AttributeString(stderr.strip() if stderr else "")
+    out.failed = False
+    out.return_code = p.returncode
+    out.stderr = err
+    if p.returncode != 0:
+        out.failed = True
+        msg = "local() encountered an error (return code %s) while executing '%s'" % (p.returncode, command)
+        _handle_failure(message=msg)
+    out.succeeded = not out.failed
+    # If we were capturing, this will be a string; otherwise it will be None.
+    return out
 
 @needs_host
 def reboot(wait):
@@ -911,9 +917,9 @@ def reboot(wait):
     client.close()
     del connections[env.host_string]
     if output.running:
-        puts("Waiting for reboot: ", flush=True, end='')
+        fastprint("Waiting for reboot: ")
         per_tick = 5
         for second in range(int(wait / per_tick)):
-            puts(".", show_prefix=False, flush=True, end='')
+            fastprint(".")
             time.sleep(per_tick)
-        puts("done.\n", show_prefix=False, flush=True)
+        fastprint("done.\n")

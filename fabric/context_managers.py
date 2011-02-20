@@ -7,6 +7,7 @@ Context managers for use with the ``with`` statement.
     Python 2.6+.)
 """
 
+import os
 import sys
 
 from contextlib import contextmanager, nested
@@ -93,6 +94,54 @@ def _setenv(**kwargs):
         yield
     finally:
         env.update(previous)
+
+
+def stringify_env_var(var):
+    key = result = '$%s' % var
+    for value, behaviour, sep in env.get(key, []):
+        if behaviour == 'append':
+            result = result + sep + '"' + value + '"'
+        elif behaviour == 'prepend':
+            result = '"' + value + '"' + sep + result
+        else:
+            result = '"' + value + '"'
+    return "%s=%s" % (var, result)
+
+
+class EnvManager(object):
+    """Generator for environment variables-related context managers."""
+
+    cache = {}
+
+    def __init__(self, var):
+        self.var = var
+
+    @classmethod
+    def for_var(klass, var):
+        cache = klass.cache
+        if var in cache:
+            return cache[var]
+        return cache.setdefault(var, klass(var))
+
+    def __str__(self):
+        return stringify_env_var(self.var)
+
+    def __call__(
+        self, value=None, behaviour='append', sep=os.pathsep, reset=False,
+        _valid=frozenset(['append', 'prepend', 'replace'])
+        ):
+        if value is None:
+            return stringify_env_var(self.var)
+        if behaviour not in _valid:
+            raise ValueError("Unknown behaviour: %s" % behaviour)
+        key = '$%s' % self.var
+        val = []
+        if (not reset) and (behaviour != 'replace'):
+            if key in env:
+                val.extend(env[key])
+        val.append((value, behaviour, sep))
+        kwargs = {key: tuple(val)}
+        return _setenv(**kwargs)
 
 
 def settings(*args, **kwargs):
@@ -228,6 +277,7 @@ def path(path, behavior='append'):
 
     .. versionadded:: 1.0
     """
+    warn("Use env.PATH(), path() has been deprecated.")
     return _setenv(path=path, path_behavior=behavior)
 
 
