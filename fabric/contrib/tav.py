@@ -103,20 +103,21 @@ def get_settings(
 
         # Handle composite contexts.
         if '/' in context:
-            context = context.rsplit('/', 1)
-            if len(context) != 2:
-                continue
-            tree, hosts = context
-            tree = tree.split('/')
+            context, hosts = context.split('/', 1)
             hosts = hosts.split(',')
-            base = {}
-            for leaf in tree:
-                cfg = config[leaf].copy()
-                if 'hosts' in cfg:
-                    del cfg['hosts']
-                base.update(cfg)
+            base = config[context].copy()
+            additional = {}
+            for _host in base.pop('hosts', []):
+                if isinstance(_host, dict):
+                    _host, _additional = _host.items()[0]
+                    additional[_host] = _additional
             for host in hosts:
-                out(get_host_info(host, base))
+                if host in additional:
+                    resp = get_host_info(host, base)
+                    resp.update(additional[host])
+                    out(resp)
+                else:
+                    out(get_host_info(host, base))
 
         # Handle hosts.
         elif ('.' in context) or (context == 'localhost'):
