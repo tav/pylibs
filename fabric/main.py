@@ -533,6 +533,54 @@ def update_output_levels(show, hide):
             output[key] = False
 
 
+def log_execution(name, host=None):
+    # Log to stdout
+    if output.running:
+        msg = "running task: %s" % name
+        if host:
+            prefix = '[%s] ' % host
+            if env.colors:
+                prefix = env.color_settings['host_prefix'](prefix)
+        else:
+            prefix = '[system] '
+            if env.colors:
+                prefix = env.color_settings['prefix'](prefix)
+        print(prefix + msg)
+
+def execute_command(spec, commands):
+    """Execute the given spec from the commands mapping."""
+    name, args, kwargs, ctx, cli_hosts, cli_roles = spec
+    # Get callable by itself
+    command = commands[name]
+    # Set current command name (used for some error messages)
+    env.command = name
+    # Run with context, if any are specified
+    if not ctx:
+        ctx = getattr(command, '__ctx__', None)
+    if ctx:
+        log_execution(name)
+        with settings(ctx=ctx):
+            command(*args, **kwargs)
+        return
+    # Set host list (also copy to env)
+    env.all_hosts = hosts = get_hosts(
+        command, cli_hosts, cli_roles)
+    # If hosts found, execute the function on each host in turn
+    for host in hosts:
+        # Preserve user
+        prev_user = env.user
+        # Split host string and apply to env dict
+        interpret_host_string(host)
+        log_execution(name, host)
+        # Actually run command
+        command(*args, **kwargs)
+        # Put old user back
+        env.user = prev_user
+    # If no hosts found, assume local-only and run once
+    if not hosts:
+        command(*args, **kwargs)
+
+
 def main():
     """
     Main command-line execution loop.
@@ -658,62 +706,39 @@ def main():
         # Initialise the default stage if none are given as the first command.
         if 'stages' in env:
             if commands_to_run[0][0] not in env.stages:
-                commands[env.stages[0]]()
+                execute_command(
+                    (env.stages[0], (), {}, None, None, None), commands
+                    )
+            else:
+                execute_command(commands_to_run.pop(0), commands)
 
         if env.config_file:
             config_path = realpath(expanduser(env.config_file))
             config_path = join(dirname(fabfile), config_path)
             config_file = open(config_path, 'rb')
             config = load_yaml(config_file.read())
-            if (not config) or (not isinstance(config, dict)):
+            if not config:
+                env.config = AttributeDict()
+            elif not isinstance(config, dict):
                 abort("Invalid config file found at %s" % config_path)
-            env.config = AttributeDict(config)
+            else:
+                env.config = AttributeDict(config)
             config_file.close()
 
         call_hooks('config.loaded')
         first_time_env_call = 1
 
         # At this point all commands must exist, so execute them in order.
-        for name, args, kwargs, ctx, cli_hosts, cli_roles in commands_to_run:
-            # Get callable by itself
-            command = commands[name]
-            # Set current command name (used for some error messages)
-            env.command = name
-            # Run with context, if any are specified
-            if not ctx:
-                ctx = getattr(command, '__ctx__', None)
-            if ctx:
-                with settings(ctx=ctx):
-                    command(*args, **kwargs)
-                continue
-            # Set host list (also copy to env)
-            env.all_hosts = hosts = get_hosts(
-                command, cli_hosts, cli_roles)
-            # If hosts found, execute the function on each host in turn
-            for host in hosts:
-                # Preserve user
-                prev_user = env.user
-                # Split host string and apply to env dict
-                interpret_host_string(host)
-                # Log to stdout
-                if output.running:
-                    msg = "[%s] Executing task '%s'" % (host, name)
-                    if env.colors:
-                        msg = env.color_settings['task'](msg)
-                    print(msg)
-                # Actually run command
-                command(*args, **kwargs)
-                # Put old user back
-                env.user = prev_user
-            # If no hosts found, assume local-only and run once
-            if not hosts:
-                command(*args, **kwargs)
+        for spec in commands_to_run:
+            execute_command(spec, commands)
+
         # If we got here, no errors occurred, so print a final note.
         if output.status:
             msg = "\nDone."
             if env.colors:
                 msg = env.color_settings['finish'](msg)
             print(msg)
+
     except SystemExit:
         # a number of internal functions might raise this one.
         raise
