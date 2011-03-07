@@ -676,7 +676,7 @@ def builtin_local(spec, arg):
     local(arg, capture=0, dir=spec.dir, format=spec.format)
 
 
-@shell('sudo', single=True)
+@shell('sudo')
 def builtin_sudo(spec, arg):
     """run the sudoed command on remote hosts"""
     return sudo(
@@ -698,10 +698,6 @@ def toggle_format(spec, arg):
         spec.format = True
         print "Formatting enabled."
 
-
-@shell(single=True)
-def foo(spec, arg):
-    1/0
 
 @shell(single=True)
 def multilocal(spec, arg):
