@@ -295,8 +295,8 @@ class ContextRunner(object):
                                 except Exception:
                                     handle_failure(command, warn_only)
                             else:
-                                r(command, shell, pty, combine_stderr, dir,
-                                  format)
+                                r(command, spec.shell, spec.pty,
+                                  spec.combine_stderr, spec.dir, spec.format)
                         except KeyboardInterrupt:
                             print
                             count += 1
