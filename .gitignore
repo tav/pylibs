@@ -1,8 +1,6 @@
 # specific files/directories
 
 build
-keyspace.py
-keyspace_client.py
 
 # hidden files/directories
 

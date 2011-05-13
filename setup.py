@@ -23,7 +23,6 @@ except ImportError:
 
 extensions = [
     Extension("simplejson._speedups", ["simplejson/_speedups.c"]),
-    Extension('greenlet', ['greenlet/greenlet.c'], include_dirs=['greenlet'])
     ]
 
 # ------------------------------------------------------------------------------
