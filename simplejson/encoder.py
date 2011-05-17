@@ -1,20 +1,19 @@
 """Implementation of JSONEncoder
 """
 import re
+from decimal import Decimal
 
-try:
-    from simplejson._speedups import encode_basestring_ascii as \
-        c_encode_basestring_ascii
-except ImportError:
-    c_encode_basestring_ascii = None
-try:
-    from simplejson._speedups import make_encoder as c_make_encoder
-except ImportError:
-    c_make_encoder = None
+def _import_speedups():
+    try:
+        from simplejson import _speedups
+        return _speedups.encode_basestring_ascii, _speedups.make_encoder
+    except ImportError:
+        return None, None
+c_encode_basestring_ascii, c_make_encoder = _import_speedups()
 
 from simplejson.decoder import PosInf
 
-ESCAPE = re.compile(r'[\x00-\x1f\\"\b\f\n\r\t]')
+ESCAPE = re.compile(ur'[\x00-\x1f\\"\b\f\n\r\t\u2028\u2029]')
 ESCAPE_ASCII = re.compile(r'([\\"]|[^\ -~])')
 HAS_UTF8 = re.compile(r'[\x80-\xff]')
 ESCAPE_DCT = {
@@ -25,6 +24,8 @@ ESCAPE_DCT = {
     '\n': '\\n',
     '\r': '\\r',
     '\t': '\\t',
+    u'\u2028': '\\u2028',
+    u'\u2029': '\\u2029',
 }
 for i in range(0x20):
     #ESCAPE_DCT.setdefault(chr(i), '\\u{0:04x}'.format(i))
@@ -104,7 +105,8 @@ class JSONEncoder(object):
     key_separator = ': '
     def __init__(self, skipkeys=False, ensure_ascii=True,
             check_circular=True, allow_nan=True, sort_keys=False,
-            indent=None, separators=None, encoding='utf-8', default=None):
+            indent=None, separators=None, encoding='utf-8', default=None,
+            use_decimal=False):
         """Constructor for JSONEncoder, with sensible defaults.
 
         If skipkeys is false, then it is a TypeError to attempt
@@ -148,6 +150,10 @@ class JSONEncoder(object):
         transformed into unicode using that encoding prior to JSON-encoding.
         The default is UTF-8.
 
+        If use_decimal is true (not the default), ``decimal.Decimal`` will
+        be supported directly by the encoder. For the inverse, decode JSON
+        with ``parse_float=decimal.Decimal``.
+
         """
 
         self.skipkeys = skipkeys
@@ -155,11 +161,14 @@ class JSONEncoder(object):
         self.check_circular = check_circular
         self.allow_nan = allow_nan
         self.sort_keys = sort_keys
+        self.use_decimal = use_decimal
         if isinstance(indent, (int, long)):
             indent = ' ' * indent
         self.indent = indent
         if separators is not None:
             self.item_separator, self.key_separator = separators
+        elif indent is not None:
+            self.item_separator = ','
         if default is not None:
             self.default = default
         self.encoding = encoding
@@ -263,16 +272,16 @@ class JSONEncoder(object):
 
         key_memo = {}
         if (_one_shot and c_make_encoder is not None
-                and not self.indent and not self.sort_keys):
+                and self.indent is None):
             _iterencode = c_make_encoder(
                 markers, self.default, _encoder, self.indent,
                 self.key_separator, self.item_separator, self.sort_keys,
-                self.skipkeys, self.allow_nan, key_memo)
+                self.skipkeys, self.allow_nan, key_memo, self.use_decimal)
         else:
             _iterencode = _make_iterencode(
                 markers, self.default, _encoder, self.indent, floatstr,
                 self.key_separator, self.item_separator, self.sort_keys,
-                self.skipkeys, _one_shot)
+                self.skipkeys, _one_shot, self.use_decimal)
         try:
             return _iterencode(o, 0)
         finally:
@@ -308,11 +317,13 @@ class JSONEncoderForHTML(JSONEncoder):
 
 def _make_iterencode(markers, _default, _encoder, _indent, _floatstr,
         _key_separator, _item_separator, _sort_keys, _skipkeys, _one_shot,
+        _use_decimal,
         ## HACK: hand-optimized bytecode; turn globals into locals
         False=False,
         True=True,
         ValueError=ValueError,
         basestring=basestring,
+        Decimal=Decimal,
         dict=dict,
         float=float,
         id=id,
@@ -360,6 +371,8 @@ def _make_iterencode(markers, _default, _encoder, _indent, _floatstr,
                 yield buf + str(value)
             elif isinstance(value, float):
                 yield buf + _floatstr(value)
+            elif _use_decimal and isinstance(value, Decimal):
+                yield buf + str(value)
             else:
                 yield buf
                 if isinstance(value, (list, tuple)):
@@ -438,6 +451,8 @@ def _make_iterencode(markers, _default, _encoder, _indent, _floatstr,
                 yield str(value)
             elif isinstance(value, float):
                 yield _floatstr(value)
+            elif _use_decimal and isinstance(value, Decimal):
+                yield str(value)
             else:
                 if isinstance(value, (list, tuple)):
                     chunks = _iterencode_list(value, _current_indent_level)
@@ -473,6 +488,8 @@ def _make_iterencode(markers, _default, _encoder, _indent, _floatstr,
         elif isinstance(o, dict):
             for chunk in _iterencode_dict(o, _current_indent_level):
                 yield chunk
+        elif _use_decimal and isinstance(o, Decimal):
+            yield str(o)
         else:
             if markers is not None:
                 markerid = id(o)
